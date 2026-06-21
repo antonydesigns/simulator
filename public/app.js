@@ -104,7 +104,7 @@ function drawGrid() {
   const endX = bottomRight.x;
   const endY = bottomRight.y;
 
-  ctx.strokeStyle = '#e8e8e8';
+  ctx.strokeStyle = '#1e1e2e';
   ctx.lineWidth = 1;
 
   for (let wx = startX; wx <= endX; wx += GRID_SIZE) {
@@ -133,7 +133,7 @@ function drawConnections() {
     const t = worldToScreen(target.x, target.y);
 
     ctx.beginPath();
-    ctx.strokeStyle = '#555';
+    ctx.strokeStyle = '#4a4a5a';
     ctx.lineWidth = 2;
     ctx.moveTo(s.x, s.y);
     ctx.lineTo(t.x, t.y);
@@ -155,25 +155,25 @@ function drawNodes() {
     if (isPending) {
       ctx.beginPath();
       ctx.arc(p.x, p.y, r + 8, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(0, 120, 255, 0.10)';
+      ctx.fillStyle = 'rgba(74, 158, 255, 0.08)';
       ctx.fill();
     }
 
     // Node circle
-    const fillColor = node.type === 'generator' ? '#2ecc71'
-                    : node.type === 'junction' ? '#999'
-                    : '#f39c12';
+    const fillColor = node.type === 'generator' ? '#27ae60'
+                    : node.type === 'junction' ? '#6a6a7a'
+                    : '#d4891a';
     ctx.beginPath();
     ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.fillStyle = fillColor;
     ctx.fill();
-    ctx.strokeStyle = sel || isPending ? '#0078ff' : '#333';
+    ctx.strokeStyle = sel || isPending ? '#4a9eff' : '#5a5a6a';
     ctx.lineWidth = (sel || isPending) ? 3 : 1.5;
     ctx.stroke();
 
     // Label
     const labelSize = Math.max(10, 11 * v.scale);
-    ctx.fillStyle = '#111';
+    ctx.fillStyle = '#b0b0bc';
     ctx.font = `${labelSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
@@ -197,7 +197,7 @@ function drawPendingLine() {
 
   ctx.beginPath();
   ctx.setLineDash([6, 4]);
-  ctx.strokeStyle = '#0078ff';
+  ctx.strokeStyle = '#4a9eff';
   ctx.lineWidth = 2;
   ctx.moveTo(s.x, s.y);
   ctx.lineTo(m.x, m.y);
@@ -212,9 +212,9 @@ function drawHoverDot() {
 
   ctx.beginPath();
   ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(150, 150, 150, 0.5)';
+  ctx.fillStyle = 'rgba(120, 120, 140, 0.4)';
   ctx.fill();
-  ctx.strokeStyle = 'rgba(100, 100, 100, 0.6)';
+  ctx.strokeStyle = 'rgba(120, 120, 140, 0.5)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
 }
@@ -235,12 +235,12 @@ function drawSelectionRect() {
   ctx.beginPath();
   ctx.rect(left, top, w, h);
   ctx.setLineDash([6, 4]);
-  ctx.strokeStyle = '#0078ff';
+  ctx.strokeStyle = '#4a9eff';
   ctx.lineWidth = 1.5;
   ctx.stroke();
   ctx.setLineDash([]);
 
-  ctx.fillStyle = 'rgba(0, 120, 255, 0.06)';
+  ctx.fillStyle = 'rgba(74, 158, 255, 0.05)';
   ctx.fillRect(left, top, w, h);
 }
 
