@@ -175,72 +175,66 @@ document.addEventListener('mouseup', () => {
 });
 
 // ─── Bus dragging + Canvas panning ───────────────────────────
-let dragTarget = null;       // 'gen' | 'load' | 'canvas'
-let dragStartMouse = null;   // { sx, sy }
-let dragStartPos = null;     // { cx, cy } for buses, { vx, vy } for canvas
+let dragTarget = null;
+let dragData = null;
 let didMove = false;
-const DRAG_THRESHOLD = 5;    // px to distinguish click from drag
+const DRAG_THRESHOLD = 4;
 
 function onPointerDown(e) {
-  // Check if clicking a bus
   let target = e.target.closest('.generator-bus, .load-bus');
   if (target) {
     dragTarget = target.classList.contains('generator-bus') ? 'gen' : 'load';
   } else {
     dragTarget = 'canvas';
   }
-  dragStartMouse = { sx: e.clientX, sy: e.clientY };
-  if (dragTarget === 'canvas') {
-    dragStartPos = { vx: viewX, vy: viewY };
-  } else {
-    // Record offset between click point (SVG coords) and bus center
-    const svgPos = screenToSVG(e.clientX, e.clientY);
-    dragStartPos = {
-      ox: svgPos.x - buses[dragTarget].cx,
-      oy: svgPos.y - buses[dragTarget].cy,
-    };
-  }
+
+  const rect = svg.getBoundingClientRect();
+  const factor = (VW / scale) / rect.width;
+  const vh = VH / scale;
+  const factorY = vh / rect.height;
+
+  const base = dragTarget === 'canvas'
+    ? { vx: viewX, vy: viewY }
+    : { cx: buses[dragTarget].cx, cy: buses[dragTarget].cy };
+
+  dragData = {
+    sx: e.clientX,
+    sy: e.clientY,
+    factor,
+    factorY,
+    base,
+  };
+
   didMove = false;
-  if (dragTarget !== 'canvas') {
-    e.stopPropagation();
-  }
+  if (dragTarget !== 'canvas') e.stopPropagation();
 }
 
 function onPointerMove(e) {
-  if (!dragStartMouse) return;
-  const dx = e.clientX - dragStartMouse.sx;
-  const dy = e.clientY - dragStartMouse.sy;
+  if (!dragData) return;
+  const dx = e.clientX - dragData.sx;
+  const dy = e.clientY - dragData.sy;
   if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
     didMove = true;
   }
   if (!didMove) return;
 
   if (dragTarget === 'canvas') {
-    // Pan: convert screen delta to SVG delta
-    const rect = svg.getBoundingClientRect();
-    const vw = VW / scale;
-    const factor = vw / rect.width;
-    viewX = dragStartPos.vx - dx * factor;
-    viewY = dragStartPos.vy - dy * factor;
+    viewX = dragData.base.vx - dx * dragData.factor;
+    viewY = dragData.base.vy - dy * dragData.factorY;
     updateViewBox();
   } else {
-    // Drag bus — direct 1:1 mapping, subtract grab offset
-    const svgPos = screenToSVG(e.clientX, e.clientY);
-    buses[dragTarget].cx = svgPos.x - dragStartPos.ox;
-    buses[dragTarget].cy = svgPos.y - dragStartPos.oy;
+    buses[dragTarget].cx = dragData.base.cx + dx * dragData.factor;
+    buses[dragTarget].cy = dragData.base.cy + dy * dragData.factorY;
     updateBusPositions();
   }
 }
 
-function onPointerUp(e) {
-  if (!dragStartMouse) return;
-  // If it was a click (no drag) on the load bus, open panel
-  if (!didMove && dragTarget === 'load') {
+function onPointerUp() {
+  if (dragData && !didMove && dragTarget === 'load') {
     openPanel();
   }
   dragTarget = null;
-  dragStartMouse = null;
-  dragStartPos = null;
+  dragData = null;
 }
 
 // Attach pointer events on SVG
