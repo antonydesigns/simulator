@@ -54,6 +54,26 @@ function updateViewBox() {
   if (zoomLevel) zoomLevel.textContent = `${Math.round(scale * 100)}%`;
 }
 
+// ─── Get SVG content rect (accounts for preserveAspectRatio) ─
+function svgContentRect() {
+  const rect = svg.getBoundingClientRect();
+  const svgAspect = VW / VH;
+  const elemAspect = rect.width / rect.height;
+  let cw, ch, ox, oy;
+  if (elemAspect > svgAspect) {
+    ch = rect.height;
+    cw = ch * svgAspect;
+    ox = (rect.width - cw) / 2;
+    oy = 0;
+  } else {
+    cw = rect.width;
+    ch = cw / svgAspect;
+    ox = 0;
+    oy = (rect.height - ch) / 2;
+  }
+  return { cw, ch, ox, oy, left: rect.left, top: rect.top };
+}
+
 // ─── Update bus positions & arrows in SVG ───────────────────
 function updateBusPositions() {
   genCircle.setAttribute('cx', buses.gen.cx);
@@ -100,11 +120,11 @@ function updateBusPositions() {
 
 // ─── Convert screen to SVG coordinates ──────────────────────
 function screenToSVG(sx, sy) {
-  const rect = svg.getBoundingClientRect();
+  const cr = svgContentRect();
   const vw = VW / scale;
   const vh = VH / scale;
-  const x = viewX + ((sx - rect.left) / rect.width) * vw;
-  const y = viewY + ((sy - rect.top) / rect.height) * vh;
+  const x = viewX + ((sx - cr.left - cr.ox) / cr.cw) * vw;
+  const y = viewY + ((sy - cr.top - cr.oy) / cr.ch) * vh;
   return { x, y };
 }
 
@@ -188,10 +208,9 @@ function onPointerDown(e) {
     dragTarget = 'canvas';
   }
 
-  const rect = svg.getBoundingClientRect();
-  const factor = (VW / scale) / rect.width;
-  const vh = VH / scale;
-  const factorY = vh / rect.height;
+  const cr = svgContentRect();
+  const factor = (VW / scale) / cr.cw;
+  const factorY = (VH / scale) / cr.ch;
 
   const base = dragTarget === 'canvas'
     ? { vx: viewX, vy: viewY }
@@ -249,9 +268,9 @@ svg.addEventListener('contextmenu', (e) => e.preventDefault());
 // ─── Zoom (mouse wheel) ──────────────────────────────────────
 gridContainer.addEventListener('wheel', (e) => {
   e.preventDefault();
-  const rect = svg.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
+  const cr = svgContentRect();
+  const mx = e.clientX - cr.left - cr.ox;
+  const my = e.clientY - cr.top - cr.oy;
 
   // Get SVG coords before zoom
   const pre = screenToSVG(e.clientX, e.clientY);
@@ -265,8 +284,8 @@ gridContainer.addEventListener('wheel', (e) => {
   const newVw = VW / newScale;
   const newVh = VH / newScale;
 
-  const fx = mx / rect.width;
-  const fy = my / rect.height;
+  const fx = mx / cr.cw;
+  const fy = my / cr.ch;
 
   viewX = pre.x - fx * newVw;
   viewY = pre.y - fy * newVh;
