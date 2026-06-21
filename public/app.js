@@ -8,6 +8,7 @@ const state = {
   hoverLine: null,
   view: { x: 0, y: 0, scale: 1 },
   spaceDown: false,
+  frequency: 50,
 };
 
 // ─── Simulation ───────────────────────────────────────────────────────
@@ -19,20 +20,63 @@ const sim = {
 };
 
 function simTick() {
-  const loads = state.nodes.filter(n => n.type === 'load');
   const gens = state.nodes.filter(n => n.type === 'generator');
+  const loads = state.nodes.filter(n => n.type === 'load');
   const storages = state.nodes.filter(n => n.type === 'storage');
 
-  // Still tick generators if only storage exists (no loads)
-  if (loads.length === 0 && storages.length === 0) return;
   if (gens.length === 0) return;
+  if (loads.length === 0 && storages.length === 0) return;
 
-  const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
   const dt = 1 / sim.tickHz;
+  const f0 = 50;
 
-  // --- Step 1: Ramp generators toward load ---
-  const targetPerGen = totalLoad / gens.length;
-  let changed = false;
+  // --- Step 1: Governor droop (fast primary response) ---
+  // Each gen adjusts output proportional to frequency deviation
+  // ΔP = -(1/droop) × (f - f0)/f0 × rating
+  for (const gen of gens) {
+    const droop = gen.droop || 0.04;
+    const rating = gen.rating || 100;
+    const dev = (state.frequency - f0) / f0;
+    const targetAdjust = -(1 / droop) * dev * rating;
+    // Governor acts fast — can change up to full rating per second
+    const cur = gen.mw || 0;
+    const maxDelta = rating * dt;
+    const delta = Math.max(-maxDelta, Math.min(maxDelta, targetAdjust - cur));
+    if (Math.abs(delta) > 0.001) {
+      gen.mw = Math.max(0, cur + delta);
+    }
+  }
+
+  // --- Step 2: Compute imbalance ---
+  const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
+  const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
+  const imbalance = totalGen - totalLoad;
+
+  // --- Step 3: Frequency change via swing equation ---
+  // total stored kinetic energy = Σ(H × rating)
+  let totalInertiaEnergy = 0;
+  for (const gen of gens) {
+    totalInertiaEnergy += (gen.inertia || 5) * (gen.rating || 100);
+  }
+
+  let dfdt = 0;
+  if (totalInertiaEnergy > 0) {
+    dfdt = (imbalance * f0) / (2 * totalInertiaEnergy);
+  }
+  state.frequency += dfdt * dt;
+
+  // Clamp within a reasonable range
+  state.frequency = Math.max(45, Math.min(55, state.frequency));
+
+  let changed = true; // frequency changed, always redraw
+
+  // --- Step 4: Generator ramp (slower secondary control) ---
+  // Target includes storage effects
+  let netLoad = totalLoad;
+  // Storage contribution subtracts from net load (charging adds, discharging subtracts)
+  // We'll compute storage after ramp
+
+  const targetPerGen = netLoad / gens.length;
   for (const gen of gens) {
     const cur = gen.mw || 0;
     const diff = targetPerGen - cur;
@@ -44,54 +88,40 @@ function simTick() {
     }
   }
 
-  // --- Step 2: Compute surplus / deficit ---
-  const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
-  let surplus = totalGen - totalLoad;
+  // --- Step 5: Storage charge/discharge from remaining surplus ---
+  const totalGenAfter = gens.reduce((s, g) => s + (g.mw || 0), 0);
+  let surplus = totalGenAfter - totalLoad;
 
   if (storages.length > 0 && Math.abs(surplus) > 0.001) {
     for (const st of storages) {
       if (surplus > 0) {
-        // Charging
         const rate = (st.chargeRate || 5);
         const maxCharge = rate * dt;
-        const capacityLeft = (st.maxCapacity || 100) - (st.mw || 0);
-        const actual = Math.min(maxCharge, surplus, capacityLeft);
-        if (actual > 0.001) {
-          st.mw = (st.mw || 0) + actual;
-          surplus -= actual;
-          changed = true;
-        }
+        const capLeft = (st.maxCapacity || 100) - (st.mw || 0);
+        const actual = Math.min(maxCharge, surplus, capLeft);
+        if (actual > 0.001) { st.mw = (st.mw || 0) + actual; surplus -= actual; changed = true; }
       } else {
-        // Discharging
         const rate = (st.dischargeRate || 5);
         const maxDischarge = rate * dt;
-        const available = st.mw || 0;
+        const avail = st.mw || 0;
         const need = -surplus;
-        const actual = Math.min(maxDischarge, need, available);
-        if (actual > 0.001) {
-          st.mw = (st.mw || 0) - actual;
-          surplus += actual;
-          changed = true;
-        }
+        const actual = Math.min(maxDischarge, need, avail);
+        if (actual > 0.001) { st.mw = (st.mw || 0) - actual; surplus += actual; changed = true; }
       }
     }
   }
 
-  // --- Step 3: Update open generator settings panels ---
+  // --- Step 6: Update open settings panels ---
   for (const nodeId of Object.keys(openPanels)) {
     const gen = state.nodes.find(n => n.id === nodeId && n.type === 'generator');
     if (gen) {
       const entry = openPanels[nodeId];
-      if (entry.outputEl) {
-        entry.outputEl.textContent = Math.round(gen.mw || 0) + ' MW';
-      }
+      if (entry.outputEl) entry.outputEl.textContent = Math.round(gen.mw || 0) + ' MW';
     }
     const st = state.nodes.find(n => n.id === nodeId && n.type === 'storage');
     if (st) {
       const entry = openPanels[nodeId];
-      if (entry.socEl) {
-        entry.socEl.textContent = Math.round(st.mw || 0) + ' MWh';
-      }
+      if (entry.socEl) entry.socEl.textContent = Math.round(st.mw || 0) + ' MWh';
     }
   }
 
@@ -109,7 +139,7 @@ function stopSim() {
   if (sim.interval) { clearInterval(sim.interval); sim.interval = null; }
 }
 
-// ─── Pointer state (not persisted) ────────────────────────────────────
+// ─── Pointer state ────────────────────────────────────────────────────
 
 const ptr = {
   downWorld: null, downScreen: null, downTime: 0, downNodeId: null,
@@ -145,20 +175,10 @@ function resizeCanvas() {
 
 // ─── Coords ────────────────────────────────────────────────────────────
 
-function screenToWorld(sx, sy) {
-  return { x: (sx - state.view.x) / state.view.scale, y: (sy - state.view.y) / state.view.scale };
-}
-function worldToScreen(wx, wy) {
-  return { x: wx * state.view.scale + state.view.x, y: wy * state.view.scale + state.view.y };
-}
-function mouseToWorld(e) {
-  const r = canvas.getBoundingClientRect();
-  return screenToWorld(e.clientX - r.left, e.clientY - r.top);
-}
-function mouseToScreen(e) {
-  const r = canvas.getBoundingClientRect();
-  return { x: e.clientX - r.left, y: e.clientY - r.top };
-}
+function screenToWorld(sx, sy) { return { x: (sx - state.view.x) / state.view.scale, y: (sy - state.view.y) / state.view.scale }; }
+function worldToScreen(wx, wy) { return { x: wx * state.view.scale + state.view.x, y: wy * state.view.scale + state.view.y }; }
+function mouseToWorld(e) { const r = canvas.getBoundingClientRect(); return screenToWorld(e.clientX - r.left, e.clientY - r.top); }
+function mouseToScreen(e) { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
 
 // ─── Drawing ───────────────────────────────────────────────────────────
 
@@ -239,6 +259,43 @@ function drawNodes() {
   }
 }
 
+function roundRect(x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+}
+
+function drawFrequencyHud() {
+  const freq = state.frequency;
+  const dev = freq - 50;
+
+  const pad = 14, bw = 170, bh = 48;
+  const rx = window.innerWidth - bw - pad, ry = pad;
+
+  ctx.fillStyle = 'rgba(240, 236, 228, 0.92)';
+  ctx.beginPath(); roundRect(rx, ry, bw, bh, 8); ctx.fill();
+  ctx.strokeStyle = '#d6d2c8'; ctx.lineWidth = 1;
+  ctx.beginPath(); roundRect(rx, ry, bw, bh, 8); ctx.stroke();
+
+  // Frequency value — colour shifts when deviating
+  ctx.fillStyle = Math.abs(dev) > 0.3 ? '#c0392b' : (Math.abs(dev) > 0.1 ? '#d4891a' : '#5a7a5a');
+  ctx.font = 'bold 24px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(freq.toFixed(2) + ' Hz', rx + bw / 2, ry + bh / 2 - 4);
+
+  ctx.fillStyle = '#8a867e';
+  ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textBaseline = 'top';
+  const sign = dev > 0 ? '+' : '';
+  ctx.fillText(sign + dev.toFixed(3) + ' Hz deviation', rx + bw / 2, ry + bh / 2 + 12);
+}
+
 function drawPendingLine() {
   if (!state.pendingSourceId || !ptr.mouseWorld) return;
   const src = state.nodes.find(n => n.id === state.pendingSourceId);
@@ -273,6 +330,7 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   drawGrid(); drawConnections(); drawNodes(); drawPendingLine(); drawHoverDot(); drawSelectionRect();
+  drawFrequencyHud();
 }
 
 // ─── Cursor ────────────────────────────────────────────────────────────
@@ -335,7 +393,7 @@ function addNode(type, wx, wy) {
   if (type === 'load') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 10 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5 };
+    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04 };
   } else if (type === 'storage') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, chargeRate: 5, dischargeRate: 5, maxCapacity: 100 };
   } else {
@@ -343,19 +401,23 @@ function addNode(type, wx, wy) {
   }
   state.nodes.push(node);
   state.selectedNodeIds = new Set([node.id]);
-  persist();
-  draw();
+  persist(); draw();
   return node;
 }
 
 // ─── Delete Node ───────────────────────────────────────────────────────
 
 function deleteNode(id) {
+  const del = state.nodes.find(n => n.id === id);
   state.nodes = state.nodes.filter(n => n.id !== id);
   state.connections = state.connections.filter(c => c.sourceId !== id && c.targetId !== id);
   state.selectedNodeIds.delete(id);
   if (state.pendingSourceId === id) state.pendingSourceId = null;
   closeSettings(id);
+  // Reset frequency if last gen removed
+  if (del && del.type === 'generator' && state.nodes.filter(n => n.type === 'generator').length === 0) {
+    state.frequency = 50;
+  }
   persist(); draw();
 }
 
@@ -403,10 +465,16 @@ async function load() {
     state.nodes = data.nodes || [];
     state.connections = data.connections || [];
     state.selectedNodeIds = new Set();
+    state.frequency = 50;
     for (const n of state.nodes) {
       if (n.mw === undefined) n.mw = 0;
       if (n.type === 'load' && n.mw === 0) n.mw = 10;
-      if (n.type === 'generator' && n.rampRate === undefined) n.rampRate = 5;
+      if (n.type === 'generator') {
+        if (n.rampRate === undefined) n.rampRate = 5;
+        if (n.rating === undefined) n.rating = 100;
+        if (n.inertia === undefined) n.inertia = 5;
+        if (n.droop === undefined) n.droop = 0.04;
+      }
       if (n.type === 'storage') {
         if (n.chargeRate === undefined) n.chargeRate = 5;
         if (n.dischargeRate === undefined) n.dischargeRate = 5;
@@ -556,13 +624,16 @@ document.addEventListener('click', (e) => { if (!menu.contains(e.target)) hideMe
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { state.pendingSourceId = null; state.selectedNodeIds = new Set(); state.hoverLine = null; hideMenu(); draw(); }
   if ((e.key === 'Backspace' || e.key === 'Delete') && state.selectedNodeIds.size > 0) {
+    const hadGen = [...state.selectedNodeIds].some(id => state.nodes.find(n => n.id === id)?.type === 'generator');
     for (const id of [...state.selectedNodeIds]) {
       state.nodes = state.nodes.filter(n => n.id !== id);
       state.connections = state.connections.filter(c => c.sourceId !== id && c.targetId !== id);
       if (state.pendingSourceId === id) state.pendingSourceId = null;
       closeSettings(id);
     }
-    state.selectedNodeIds = new Set(); persist(); draw();
+    state.selectedNodeIds = new Set();
+    if (hadGen && state.nodes.filter(n => n.type === 'generator').length === 0) state.frequency = 50;
+    persist(); draw();
   }
 });
 
@@ -576,7 +647,7 @@ function openSettings(nodeId) {
   const panel = document.createElement('div');
   panel.className = 'settings-panel'; panel.dataset.nodeId = nodeId; panel.style.zIndex = Date.now();
   const tag = node.label || node.id.slice(-4);
-  const entry = { panel }; // will populate with refs
+  const entry = { panel };
 
   if (node.type === 'generator') {
     panel.innerHTML = `
@@ -584,14 +655,29 @@ function openSettings(nodeId) {
       <div class="settings-body">
         <div class="settings-row"><label class="settings-label">Current Output</label><div class="settings-value-display gen-output">${Math.round(node.mw || 0)} MW</div></div>
         <div class="settings-row"><label class="settings-label">Ramp Rate (MW/s)</label><div class="settings-slider-group"><input type="range" class="ramp-slider" min="1" max="50" step="1" value="${node.rampRate || 5}"><span class="ramp-value">${node.rampRate || 5}</span></div></div>
+        <div class="settings-row"><label class="settings-label">Rating (MVA)</label><div class="settings-slider-group"><input type="range" class="rating-slider" min="10" max="500" step="10" value="${node.rating || 100}"><span class="rating-value">${node.rating || 100}</span></div></div>
+        <div class="settings-row"><label class="settings-label">Inertia H (s)</label><div class="settings-slider-group"><input type="range" class="inertia-slider" min="1" max="15" step="0.5" value="${node.inertia || 5}"><span class="inertia-value">${(node.inertia || 5).toFixed(1)}</span></div></div>
+        <div class="settings-row"><label class="settings-label">Droop (%)</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="1" max="10" step="0.5" value="${(node.droop || 0.04) * 100}"><span class="droop-value">${((node.droop || 0.04) * 100).toFixed(1)}%</span></div></div>
       </div>
       <div class="settings-resize-handle"></div>`;
 
-    const rampSlider = panel.querySelector('.ramp-slider');
-    const rampVal = panel.querySelector('.ramp-value');
     entry.outputEl = panel.querySelector('.gen-output');
+
+    const rampSlider = panel.querySelector('.ramp-slider'), rampVal = panel.querySelector('.ramp-value');
     rampSlider.addEventListener('input', () => { const v = parseInt(rampSlider.value, 10); rampVal.textContent = v; node.rampRate = v; });
     rampSlider.addEventListener('change', () => persist());
+
+    const ratSlider = panel.querySelector('.rating-slider'), ratVal = panel.querySelector('.rating-value');
+    ratSlider.addEventListener('input', () => { const v = parseInt(ratSlider.value, 10); ratVal.textContent = v; node.rating = v; });
+    ratSlider.addEventListener('change', () => persist());
+
+    const inSlider = panel.querySelector('.inertia-slider'), inVal = panel.querySelector('.inertia-value');
+    inSlider.addEventListener('input', () => { const v = parseFloat(inSlider.value); inVal.textContent = v.toFixed(1); node.inertia = v; });
+    inSlider.addEventListener('change', () => persist());
+
+    const drSlider = panel.querySelector('.droop-slider'), drVal = panel.querySelector('.droop-value');
+    drSlider.addEventListener('input', () => { const v = parseFloat(drSlider.value); drVal.textContent = v.toFixed(1) + '%'; node.droop = v / 100; });
+    drSlider.addEventListener('change', () => persist());
 
   } else if (node.type === 'storage') {
     panel.innerHTML = `
@@ -619,7 +705,6 @@ function openSettings(nodeId) {
     cap.addEventListener('change', () => persist());
 
   } else {
-    // Load
     panel.innerHTML = `
       <div class="settings-header"><span class="settings-title">Load ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
