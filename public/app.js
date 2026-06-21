@@ -5,16 +5,27 @@ const state = {
   connections: [],
   selectedNodeId: null,
   pendingSourceId: null,
-  dragNodeId: null,
-  dragOffset: { x: 0, y: 0 },
-  isPanning: false,
-  panStart: { x: 0, y: 0 },
+  hoverLine: null,       // { x, y, conn } — closest point on a line
   view: { x: 0, y: 0, scale: 1 },
-  hoverLine: null,      // { x, y, conn } — closest point on a line
-  lastClickTime: 0,
-  lastClickNodeId: null,
-  ignoreNextClick: false,
 };
+
+// ─── Pointer state (not persisted) ────────────────────────────────────
+
+const ptr = {
+  downWorld: null,       // world coords at last mousedown
+  downTime: 0,
+  downNodeId: null,      // node hit on mousedown
+  dragOffset: { x: 0, y: 0 },
+  isDragging: false,     // dragging a node
+  isPanning: false,      // panning the canvas
+  _panOffsetX: 0,
+  _panOffsetY: 0,
+  lastClickTime: 0,      // for synthetic double-click
+  lastClickNodeId: null,
+  mouseWorld: null,      // current mouse position in world coords
+};
+
+const DRAG_THRESHOLD = 4; // screen px before drag starts
 
 // ─── DOM Refs ──────────────────────────────────────────────────────────
 
@@ -66,7 +77,6 @@ function drawGrid() {
   const w = window.innerWidth;
   const h = window.innerHeight;
 
-  // Inverse-transform the screen corners to get visible world bounds
   const topLeft = screenToWorld(0, 0);
   const bottomRight = screenToWorld(w, h);
 
@@ -95,8 +105,6 @@ function drawGrid() {
 }
 
 function drawConnections() {
-  const v = state.view;
-
   for (const conn of state.connections) {
     const source = state.nodes.find(n => n.id === conn.sourceId);
     const target = state.nodes.find(n => n.id === conn.targetId);
@@ -160,12 +168,12 @@ function drawNodes() {
 }
 
 function drawPendingLine() {
-  if (!state.pendingSourceId || !state._mouseWorld) return;
+  if (!state.pendingSourceId || !ptr.mouseWorld) return;
   const source = state.nodes.find(n => n.id === state.pendingSourceId);
   if (!source) return;
 
   const s = worldToScreen(source.x, source.y);
-  const m = worldToScreen(state._mouseWorld.x, state._mouseWorld.y);
+  const m = worldToScreen(ptr.mouseWorld.x, ptr.mouseWorld.y);
 
   ctx.beginPath();
   ctx.setLineDash([6, 4]);
@@ -192,10 +200,10 @@ function drawHoverDot() {
 }
 
 function draw() {
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const dpr = window.devicePixelRatio || 1;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
-  // All drawing uses view transform via manual screen coords
   drawGrid();
   drawConnections();
   drawNodes();
@@ -205,14 +213,13 @@ function draw() {
 
 // ─── Geometry Helpers ──────────────────────────────────────────────────
 
-// Distance from point (px,py) to line segment (ax,ay)-(bx,by)
 function pointToSegmentDist(px, py, ax, ay, bx, by) {
   const dx = bx - ax;
   const dy = by - ay;
   const lenSq = dx * dx + dy * dy;
   if (lenSq === 0) {
     const ex = px - ax, ey = py - ay;
-    return Math.sqrt(ex * ex + ey * ey);
+    return { dist: Math.sqrt(ex * ex + ey * ey), cx: ax, cy: ay };
   }
   let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
   t = Math.max(0, Math.min(1, t));
@@ -233,7 +240,6 @@ function findNearestLine(wx, wy, threshold) {
 
     const result = pointToSegmentDist(wx, wy, src.x, src.y, tgt.x, tgt.y);
     if (result.dist < bestDist) {
-      // Make sure the point isn't too close to either endpoint
       const distToSrc = Math.sqrt((result.cx - src.x) ** 2 + (result.cy - src.y) ** 2);
       const distToTgt = Math.sqrt((result.cx - tgt.x) ** 2 + (result.cy - tgt.y) ** 2);
       if (distToSrc > NODE_RADIUS + 4 && distToTgt > NODE_RADIUS + 4) {
@@ -309,14 +315,10 @@ function addConnection(sourceId, targetId) {
 // ─── Split a Connection at a Point (create junction) ───────────────────
 
 function splitConnection(conn, wx, wy) {
-  // Create a junction node
   const junction = { id: uid(), type: 'junction', x: wx, y: wy, label: '' };
   state.nodes.push(junction);
 
-  // Remove the old connection
   state.connections = state.connections.filter(c => c !== conn);
-
-  // Add two new connections through the junction
   state.connections.push({ sourceId: conn.sourceId, targetId: junction.id });
   state.connections.push({ sourceId: junction.id, targetId: conn.targetId });
 
@@ -402,92 +404,128 @@ canvas.addEventListener('mousedown', (e) => {
   const world = mouseToWorld(e);
   const hit = hitNode(world.x, world.y);
 
-  if (hit) {
-    // Start dragging the node
-    state.dragNodeId = hit.id;
-    state.dragOffset = { x: world.x - hit.x, y: world.y - hit.y };
-    return;
-  }
-
-  // Start panning the canvas
-  state.isPanning = true;
-  state.panStart = { x: e.clientX - state.view.x, y: e.clientY - state.view.y };
+  ptr.downWorld = world;
+  ptr.downTime = Date.now();
+  ptr.downNodeId = hit ? hit.id : null;
+  ptr.isDragging = false;
+  ptr.isPanning = false;
 });
 
 // --- Mouse move ---
 canvas.addEventListener('mousemove', (e) => {
   const world = mouseToWorld(e);
-  state._mouseWorld = world;
+  ptr.mouseWorld = world;
 
-  // Node dragging
-  if (state.dragNodeId) {
-    const node = state.nodes.find(n => n.id === state.dragNodeId);
+  // --- Dragging a node ---
+  if (ptr.isDragging && ptr.downNodeId) {
+    const node = state.nodes.find(n => n.id === ptr.downNodeId);
     if (node) {
-      node.x = world.x - state.dragOffset.x;
-      node.y = world.y - state.dragOffset.y;
-      state.hoverLine = null; // hide hover while dragging
+      node.x = world.x - ptr.dragOffset.x;
+      node.y = world.y - ptr.dragOffset.y;
+      state.hoverLine = null;
       draw();
     }
     return;
   }
 
-  // Canvas panning
-  if (state.isPanning) {
-    state.view.x = e.clientX - state.panStart.x;
-    state.view.y = e.clientY - state.panStart.y;
+  // --- Panning ---
+  if (ptr.isPanning) {
+    state.view.x = e.clientX - ptr._panOffsetX;
+    state.view.y = e.clientY - ptr._panOffsetY;
     state.hoverLine = null;
     draw();
     return;
   }
 
-  // Line hover detection (only when not dragging/panning)
-  const threshold = 15 / state.view.scale; // ~15px in screen space
-  state.hoverLine = findNearestLine(world.x, world.y, threshold);
+  // --- Check if we should start dragging or panning ---
+  if (ptr.downWorld) {
+    const dx = (world.x - ptr.downWorld.x) * state.view.scale;
+    const dy = (world.y - ptr.downWorld.y) * state.view.scale;
+    const moved = Math.sqrt(dx * dx + dy * dy);
 
-  if (state.pendingSourceId) {
-    draw(); // Update pending line
-  } else {
-    draw();
+    if (moved > DRAG_THRESHOLD) {
+      if (ptr.downNodeId) {
+        ptr.isDragging = true;
+        // Compute offset from node center so the node doesn't jump
+        const node = state.nodes.find(n => n.id === ptr.downNodeId);
+        if (node) {
+          ptr.dragOffset = { x: world.x - node.x, y: world.y - node.y };
+        }
+      } else {
+        ptr.isPanning = true;
+        ptr._panOffsetX = e.clientX - state.view.x;
+        ptr._panOffsetY = e.clientY - state.view.y;
+      }
+      draw();
+      return;
+    }
   }
+
+  // --- Line hover (only when not dragging/panning) ---
+  const threshold = 15 / state.view.scale;
+  state.hoverLine = findNearestLine(world.x, world.y, threshold);
+  draw();
 });
 
 // --- Mouse up ---
 canvas.addEventListener('mouseup', (e) => {
   if (e.button !== 0) return;
 
-  if (state.dragNodeId) {
-    state.dragNodeId = null;
+  // Stop dragging → persist
+  if (ptr.isDragging) {
+    ptr.isDragging = false;
+    ptr.downNodeId = null;
+    ptr.downWorld = null;
     persist();
     draw();
     return;
   }
 
-  if (state.isPanning) {
-    state.isPanning = false;
+  // Stop panning
+  if (ptr.isPanning) {
+    ptr.isPanning = false;
+    ptr.downWorld = null;
     draw();
-  }
-});
-
-// --- Click (single) ---
-canvas.addEventListener('click', (e) => {
-  hideMenu();
-  if (state.ignoreNextClick) {
-    state.ignoreNextClick = false;
     return;
   }
 
-  const world = mouseToWorld(e);
-  const hit = hitNode(world.x, world.y);
+  // --- It was a click (no drag) → process ---
 
-  // If hovering over a line, split it
-  if (state.hoverLine && !hit) {
+  ptr.downWorld = null;
+
+  // Use the mouseup event position directly for accuracy
+  const clickWorld = mouseToWorld(e);
+  const hit = hitNode(clickWorld.x, clickWorld.y);
+  const now = Date.now();
+
+  // --- Double-click detection (synthetic) ---
+  const isDblClick = hit && hit.id === ptr.lastClickNodeId && (now - ptr.lastClickTime) < 400;
+
+  ptr.lastClickTime = now;
+  ptr.lastClickNodeId = hit ? hit.id : null;
+
+  if (isDblClick) {
+    // Double-click on a node → toggle selection / pending connection
+    onDoubleClickNode(hit);
+    return;
+  }
+
+  // --- Single click ---
+
+  // Re-check line hover at click position
+  const threshold = 15 / state.view.scale;
+  const clickHover = state.hoverLine && findNearestLine(clickWorld.x, clickWorld.y, threshold);
+
+  // Click on a line hover → split line (before node hit test — hover dot is on the line)
+  if (clickHover) {
+    state.hoverLine = clickHover;
     splitConnection(state.hoverLine.conn, state.hoverLine.x, state.hoverLine.y);
     state.hoverLine = null;
     return;
   }
 
+  // Click on empty space → cancel pending source
   if (!hit) {
-    // Click on empty space — cancel pending source
     if (state.pendingSourceId) {
       state.pendingSourceId = null;
       draw();
@@ -495,36 +533,27 @@ canvas.addEventListener('click', (e) => {
     return;
   }
 
-  // Clicked on a node while a pending source exists → create connection
+  // Click on a node while a pending source exists → connect
   if (state.pendingSourceId) {
-    // Allow any node type to connect to any other
     addConnection(state.pendingSourceId, hit.id);
     return;
   }
 
-  // Single click on a node without pending source — do nothing (selection is double-click only)
+  // Single click on a node with no pending source → do nothing (double-click needed for selection)
 });
 
-// --- Double-click ---
-canvas.addEventListener('dblclick', (e) => {
-  const world = mouseToWorld(e);
-  const hit = hitNode(world.x, world.y);
-
-  if (hit) {
-    state.ignoreNextClick = true;
-
-    if (state.pendingSourceId === hit.id) {
-      // Deselect
-      state.pendingSourceId = null;
-      state.selectedNodeId = null;
-    } else {
-      // Select node and enter pending connection mode
-      state.pendingSourceId = hit.id;
-      state.selectedNodeId = hit.id;
-    }
-    draw();
+function onDoubleClickNode(hit) {
+  if (state.pendingSourceId === hit.id) {
+    // Deselect
+    state.pendingSourceId = null;
+    state.selectedNodeId = null;
+  } else {
+    // Select node and enter pending connection mode
+    state.pendingSourceId = hit.id;
+    state.selectedNodeId = hit.id;
   }
-});
+  draw();
+}
 
 // --- Wheel (zoom) ---
 canvas.addEventListener('wheel', (e) => {
@@ -534,13 +563,11 @@ canvas.addEventListener('wheel', (e) => {
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
 
-  // World position under the cursor (before zoom)
   const world = screenToWorld(mx, my);
 
   const zoomFactor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
   const newScale = Math.max(0.1, Math.min(10, state.view.scale * zoomFactor));
 
-  // Adjust view so the world point under the cursor stays fixed
   state.view.x = mx - world.x * newScale;
   state.view.y = my - world.y * newScale;
   state.view.scale = newScale;
