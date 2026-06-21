@@ -71,6 +71,11 @@ function mouseToWorld(e) {
 
 const GRID_SIZE = 40;
 const NODE_RADIUS = 14;
+const JUNCTION_RADIUS = 4; // 75% smaller than NODE_RADIUS
+
+function nodeRadius(node) {
+  return node.type === 'junction' ? JUNCTION_RADIUS : NODE_RADIUS;
+}
 
 function drawGrid() {
   const v = state.view;
@@ -127,7 +132,8 @@ function drawNodes() {
 
   for (const node of state.nodes) {
     const p = worldToScreen(node.x, node.y);
-    const r = NODE_RADIUS * v.scale;
+    const baseR = nodeRadius(node);
+    const r = baseR * v.scale;
     const isSelected = node.id === state.selectedNodeId;
     const isPending = node.id === state.pendingSourceId;
 
@@ -188,7 +194,7 @@ function drawPendingLine() {
 function drawHoverDot() {
   if (!state.hoverLine) return;
   const p = worldToScreen(state.hoverLine.x, state.hoverLine.y);
-  const r = NODE_RADIUS * state.view.scale;
+  const r = JUNCTION_RADIUS * state.view.scale;
 
   ctx.beginPath();
   ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
@@ -242,7 +248,9 @@ function findNearestLine(wx, wy, threshold) {
     if (result.dist < bestDist) {
       const distToSrc = Math.sqrt((result.cx - src.x) ** 2 + (result.cy - src.y) ** 2);
       const distToTgt = Math.sqrt((result.cx - tgt.x) ** 2 + (result.cy - tgt.y) ** 2);
-      if (distToSrc > NODE_RADIUS + 4 && distToTgt > NODE_RADIUS + 4) {
+      const srcMargin = nodeRadius(src) + 4;
+      const tgtMargin = nodeRadius(tgt) + 4;
+      if (distToSrc > srcMargin && distToTgt > tgtMargin) {
         bestDist = result.dist;
         best = { x: result.cx, y: result.cy, conn };
       }
@@ -258,7 +266,8 @@ function hitNode(wx, wy) {
     const n = state.nodes[i];
     const dx = wx - n.x;
     const dy = wy - n.y;
-    if (dx * dx + dy * dy <= (NODE_RADIUS + 4) ** 2) {
+    const r = nodeRadius(n) + 4;
+    if (dx * dx + dy * dy <= r * r) {
       return n;
     }
   }
