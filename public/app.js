@@ -393,16 +393,7 @@ function hideMenu() {
 
 // --- Right-click ---
 canvas.addEventListener('contextmenu', (e) => {
-  const world = mouseToWorld(e);
-  const hit = hitNode(world.x, world.y);
-
-  if (hit) {
-    deleteNode(hit.id);
-    hideMenu();
-    return;
-  }
-
-  showMenu(e);
+  showMenu(e); // showMenu calls preventDefault internally
 });
 
 // --- Mouse down ---
