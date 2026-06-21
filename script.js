@@ -190,9 +190,16 @@ function onPointerDown(e) {
     dragTarget = 'canvas';
   }
   dragStartMouse = { sx: e.clientX, sy: e.clientY };
-  dragStartPos = dragTarget === 'canvas'
-    ? { vx: viewX, vy: viewY }
-    : { ...buses[dragTarget] };
+  if (dragTarget === 'canvas') {
+    dragStartPos = { vx: viewX, vy: viewY };
+  } else {
+    // Record offset between click point (SVG coords) and bus center
+    const svgPos = screenToSVG(e.clientX, e.clientY);
+    dragStartPos = {
+      ox: svgPos.x - buses[dragTarget].cx,
+      oy: svgPos.y - buses[dragTarget].cy,
+    };
+  }
   didMove = false;
   if (dragTarget !== 'canvas') {
     e.stopPropagation();
@@ -217,10 +224,10 @@ function onPointerMove(e) {
     viewY = dragStartPos.vy - dy * factor;
     updateViewBox();
   } else {
-    // Drag bus — direct 1:1 mapping from mouse to SVG coords
+    // Drag bus — direct 1:1 mapping, subtract grab offset
     const svgPos = screenToSVG(e.clientX, e.clientY);
-    buses[dragTarget].cx = svgPos.x;
-    buses[dragTarget].cy = svgPos.y;
+    buses[dragTarget].cx = svgPos.x - dragStartPos.ox;
+    buses[dragTarget].cy = svgPos.y - dragStartPos.oy;
     updateBusPositions();
   }
 }
