@@ -30,88 +30,75 @@ function simTick() {
   const dt = 1 / sim.tickHz;
   const f0 = 50;
 
-  // --- Step 1: Governor droop (fast primary response) ---
-  // Each gen adjusts output proportional to frequency deviation
-  // ΔP = -(1/droop) × (f - f0)/f0 × rating
+  // --- Step 1: Governor droop (instant primary response) ---
+  // Each gen's actual output = baseSetpoint + frequency modulation
+  //   govMod = -(1/droop) × ((f - f0)/f0) × rating
+  //   gen.mw = clamp(baseSetpoint + govMod, 0, rating)
+  // govMod is POSITIVE when frequency is LOW (adds output)
+  // govMod is NEGATIVE when frequency is HIGH (reduces output)
   for (const gen of gens) {
     const droop = gen.droop || 0.04;
     const rating = gen.rating || 100;
+    const base = gen._baseSetpoint || 0;
     const dev = (state.frequency - f0) / f0;
-    const targetAdjust = -(1 / droop) * dev * rating;
-    // Governor acts fast — can change up to full rating per second
-    const cur = gen.mw || 0;
-    const maxDelta = rating * dt;
-    const delta = Math.max(-maxDelta, Math.min(maxDelta, targetAdjust - cur));
-    if (Math.abs(delta) > 0.001) {
-      gen.mw = Math.max(0, cur + delta);
-    }
+    const govMod = -(1 / droop) * dev * rating;
+    gen.mw = Math.max(0, base + govMod);
   }
 
-  // --- Step 2: Compute imbalance ---
+  // --- Step 2: Compute imbalance & frequency change ---
   const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
   const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
   const imbalance = totalGen - totalLoad;
 
-  // --- Step 3: Frequency change via swing equation ---
-  // total stored kinetic energy = Σ(H × rating)
   let totalInertiaEnergy = 0;
-  for (const gen of gens) {
-    totalInertiaEnergy += (gen.inertia || 5) * (gen.rating || 100);
-  }
+  for (const gen of gens) totalInertiaEnergy += (gen.inertia || 5) * (gen.rating || 100);
 
   let dfdt = 0;
-  if (totalInertiaEnergy > 0) {
-    dfdt = (imbalance * f0) / (2 * totalInertiaEnergy);
-  }
+  if (totalInertiaEnergy > 0) dfdt = (imbalance * f0) / (2 * totalInertiaEnergy);
   state.frequency += dfdt * dt;
-
-  // Clamp within a reasonable range
   state.frequency = Math.max(45, Math.min(55, state.frequency));
 
-  let changed = true; // frequency changed, always redraw
+  let changed = true;
 
-  // --- Step 4: Generator ramp (slower secondary control) ---
-  // Target includes storage effects
-  let netLoad = totalLoad;
-  // Storage contribution subtracts from net load (charging adds, discharging subtracts)
-  // We'll compute storage after ramp
-
-  const targetPerGen = netLoad / gens.length;
+  // --- Step 3: Ramp base setpoint (slow secondary control) ---
+  // The base setpoint moves toward load share at rampRate.
+  // This slowly brings frequency back to 50 Hz.
+  const targetPerGen = totalLoad / gens.length;
   for (const gen of gens) {
-    const cur = gen.mw || 0;
-    const diff = targetPerGen - cur;
+    const base = gen._baseSetpoint || 0;
+    const diff = targetPerGen - base;
     const maxDelta = (gen.rampRate || 5) * dt;
     const delta = Math.max(-maxDelta, Math.min(maxDelta, diff));
     if (Math.abs(delta) > 0.001) {
-      gen.mw = Math.max(0, cur + delta);
+      gen._baseSetpoint = Math.max(0, base + delta);
       changed = true;
     }
   }
 
-  // --- Step 5: Storage charge/discharge from remaining surplus ---
-  const totalGenAfter = gens.reduce((s, g) => s + (g.mw || 0), 0);
-  let surplus = totalGenAfter - totalLoad;
+  // --- Step 4: Storage charge/discharge from surplus ---
+  const totalGenFin = gens.reduce((s, g) => s + (g.mw || 0), 0);
+  let surplus = totalGenFin - totalLoad;
 
   if (storages.length > 0 && Math.abs(surplus) > 0.001) {
     for (const st of storages) {
       if (surplus > 0) {
         const rate = (st.chargeRate || 5);
-        const maxCharge = rate * dt;
+        const maxC = rate * dt;
         const capLeft = (st.maxCapacity || 100) - (st.mw || 0);
-        const actual = Math.min(maxCharge, surplus, capLeft);
-        if (actual > 0.001) { st.mw = (st.mw || 0) + actual; surplus -= actual; changed = true; }
+        const a = Math.min(maxC, surplus, capLeft);
+        if (a > 0.001) { st.mw = (st.mw || 0) + a; surplus -= a; changed = true; }
       } else {
         const rate = (st.dischargeRate || 5);
-        const maxDischarge = rate * dt;
+        const maxD = rate * dt;
         const avail = st.mw || 0;
         const need = -surplus;
-        const actual = Math.min(maxDischarge, need, avail);
-        if (actual > 0.001) { st.mw = (st.mw || 0) - actual; surplus += actual; changed = true; }
+        const a = Math.min(maxD, need, avail);
+        if (a > 0.001) { st.mw = (st.mw || 0) - a; surplus += a; changed = true; }
       }
     }
   }
 
-  // --- Step 6: Update open settings panels ---
+  // --- Step 5: Update open settings panels ---
   for (const nodeId of Object.keys(openPanels)) {
     const gen = state.nodes.find(n => n.id === nodeId && n.type === 'generator');
     if (gen) {
@@ -393,7 +380,7 @@ function addNode(type, wx, wy) {
   if (type === 'load') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 10 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04 };
+    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, _baseSetpoint: 0 };
   } else if (type === 'storage') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, chargeRate: 5, dischargeRate: 5, maxCapacity: 100 };
   } else {
@@ -474,6 +461,7 @@ async function load() {
         if (n.rating === undefined) n.rating = 100;
         if (n.inertia === undefined) n.inertia = 5;
         if (n.droop === undefined) n.droop = 0.04;
+        if (n._baseSetpoint === undefined) n._baseSetpoint = n.mw || 0;
       }
       if (n.type === 'storage') {
         if (n.chargeRate === undefined) n.chargeRate = 5;
