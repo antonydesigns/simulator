@@ -76,8 +76,8 @@ html, body {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.10);
   min-width: 220px;
   min-height: 140px;
+  max-height: 350px;
   width: 260px;
-  height: 180px;
   display: flex;
   flex-direction: column;
   user-select: none;
@@ -126,7 +126,16 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  overflow: hidden;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.settings-body::-webkit-scrollbar {
+  width: 6px;
+}
+.settings-body::-webkit-scrollbar-thumb {
+  background: #d6d2c8;
+  border-radius: 3px;
 }
 
 .settings-row {
@@ -287,6 +296,23 @@ html, body {
 .rating-slider::-moz-range-thumb, .inertia-slider::-moz-range-thumb, .droop-slider::-moz-range-thumb {
   width: 18px; height: 18px; border-radius: 50%; background: #b0aca2; border: 2px solid #8a867e; cursor: pointer;
 }
+.dispatch-slider {
+  -webkit-appearance: none; appearance: none; flex: 1;
+  height: 6px; border-radius: 3px; background: #d6d2c8; outline: none; cursor: pointer;
+}
+.dispatch-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: #6aaa64; border: 2px solid #4a8a44; cursor: pointer; transition: background 0.1s;
+}
+.dispatch-slider::-webkit-slider-thumb:hover { background: #4a8a44; }
+.dispatch-slider::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%; background: #6aaa64; border: 2px solid #4a8a44; cursor: pointer;
+}
+.dispatch-value {
+  font-size: 18px; font-weight: 600; color: #555; min-width: 50px; text-align: right;
+}
+
 .rating-value, .inertia-value, .droop-value {
   font-size: 18px; font-weight: 600; color: #555; min-width: 50px; text-align: right;
 }

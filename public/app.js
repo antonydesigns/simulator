@@ -82,11 +82,13 @@ function simTick() {
 
   let changed = true;
 
-  // --- Step 4: Ramp base setpoint (slow secondary control) ---
-  const targetPerGen = totalLoad / gens.length;
+  // --- Step 4: Ramp base setpoint toward dispatch target ---
+  // Each gen ramps toward its user-set dispatchTarget, not toward load share.
+  // The governor + frequency deviation provide the fast balancing on top.
   for (const gen of gens) {
     const base = gen._baseSetpoint || 0;
-    const diff = targetPerGen - base;
+    const target = gen.dispatchTarget || 0;
+    const diff = target - base;
     const maxDelta = (gen.rampRate || 5) * dt;
     const delta = Math.max(-maxDelta, Math.min(maxDelta, diff));
     if (Math.abs(delta) > 0.001) {
@@ -377,7 +379,7 @@ function addNode(type, wx, wy) {
   if (type === 'load') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 10 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, _baseSetpoint: 0 };
+    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, dispatchTarget: 0, _baseSetpoint: 0 };
   } else if (type === 'storage') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, chargeRate: 5, dischargeRate: 5, maxCapacity: 100 };
   } else {
@@ -458,6 +460,7 @@ async function load() {
         if (n.rating === undefined) n.rating = 100;
         if (n.inertia === undefined) n.inertia = 5;
         if (n.droop === undefined) n.droop = 0.04;
+        if (n.dispatchTarget === undefined) n.dispatchTarget = 0;
         if (n._baseSetpoint === undefined) n._baseSetpoint = n.mw || 0;
       }
       if (n.type === 'storage') {
@@ -638,7 +641,8 @@ function openSettings(nodeId) {
     panel.innerHTML = `
       <div class="settings-header"><span class="settings-title">Generator ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
-        <div class="settings-row"><label class="settings-label">Current Output</label><div class="settings-value-display gen-output">${Math.round(node.mw || 0)} MW</div></div>
+        <div class="settings-row"><label class="settings-label">Dispatch (MW)</label><div class="settings-slider-group"><input type="range" class="dispatch-slider" min="0" max="500" step="10" value="${node.dispatchTarget || 0}"><span class="dispatch-value">${node.dispatchTarget || 0}</span></div></div>
+        <div class="settings-row"><label class="settings-label">Current Output</label><div class="settings-value-display gen-output" style="font-size:18px">${Math.round(node.mw || 0)} MW</div></div>
         <div class="settings-row"><label class="settings-label">Ramp Rate (MW/s)</label><div class="settings-slider-group"><input type="range" class="ramp-slider" min="1" max="50" step="1" value="${node.rampRate || 5}"><span class="ramp-value">${node.rampRate || 5}</span></div></div>
         <div class="settings-row"><label class="settings-label">Rating (MVA)</label><div class="settings-slider-group"><input type="range" class="rating-slider" min="10" max="500" step="10" value="${node.rating || 100}"><span class="rating-value">${node.rating || 100}</span></div></div>
         <div class="settings-row"><label class="settings-label">Inertia H (s)</label><div class="settings-slider-group"><input type="range" class="inertia-slider" min="1" max="15" step="0.5" value="${node.inertia || 5}"><span class="inertia-value">${(node.inertia || 5).toFixed(1)}</span></div></div>
@@ -647,6 +651,10 @@ function openSettings(nodeId) {
       <div class="settings-resize-handle"></div>`;
 
     entry.outputEl = panel.querySelector('.gen-output');
+
+    const dispatchSlider = panel.querySelector('.dispatch-slider'), dispatchVal = panel.querySelector('.dispatch-value');
+    dispatchSlider.addEventListener('input', () => { const v = parseInt(dispatchSlider.value, 10); dispatchVal.textContent = v; node.dispatchTarget = v; });
+    dispatchSlider.addEventListener('change', () => persist());
 
     const rampSlider = panel.querySelector('.ramp-slider'), rampVal = panel.querySelector('.ramp-value');
     rampSlider.addEventListener('input', () => { const v = parseInt(rampSlider.value, 10); rampVal.textContent = v; node.rampRate = v; });
