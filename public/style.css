@@ -57,3 +57,9 @@ html, body {
 .context-menu-item:active {
   background: #e0e0e0;
 }
+
+.context-menu-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: #e0e0e0;
+}
