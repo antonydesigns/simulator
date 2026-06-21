@@ -1,0 +1,13 @@
+{
+  "name": "power-grid-simulator",
+  "version": "0.1.0",
+  "description": "A simple 2D power grid simulator",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
