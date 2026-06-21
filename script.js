@@ -11,6 +11,7 @@ const loadGroup = document.getElementById('loadGroup');
 const loadValue = document.getElementById('loadValue');
 const genValue = document.getElementById('genValue');
 const loadPanel = document.getElementById('loadPanel');
+const modalHeader = document.getElementById('modalHeader');
 const closePanel = document.getElementById('closePanel');
 const loadSlider = document.getElementById('loadSlider');
 const loadSliderValue = document.getElementById('loadSliderValue');
@@ -73,10 +74,32 @@ function closePanelFn() {
 loadGroup.addEventListener('click', openPanel);
 closePanel.addEventListener('click', closePanelFn);
 
-// Close panel on Escape key
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !loadPanel.classList.contains('hidden')) {
-    closePanelFn();
+// ─── Draggable modal ─────────────────────────────────────────
+let dragActive = false;
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+
+modalHeader.addEventListener('mousedown', (e) => {
+  dragActive = true;
+  const rect = loadPanel.getBoundingClientRect();
+  dragOffsetX = e.clientX - rect.left;
+  dragOffsetY = e.clientY - rect.top;
+  loadPanel.style.cursor = 'grabbing';
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!dragActive) return;
+  const x = e.clientX - dragOffsetX;
+  const y = e.clientY - dragOffsetY;
+  loadPanel.style.left = `${x}px`;
+  loadPanel.style.top = `${y}px`;
+  loadPanel.style.right = 'auto';
+});
+
+document.addEventListener('mouseup', () => {
+  if (dragActive) {
+    dragActive = false;
+    loadPanel.style.cursor = '';
   }
 });
 
