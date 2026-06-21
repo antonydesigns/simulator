@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Power Grid Simulator — 2 Bus</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>⚡ Power Grid Simulator</h1>
+    <span class="badge">2-Bus System</span>
+  </header>
+
+  <main>
+    <!-- The grid canvas -->
+    <div class="grid-container">
+      <div class="grid-bg" id="gridBg"></div>
+      <svg class="svg-overlay" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid meet">
+        <!-- Transmission line -->
+        <line id="transmissionLine" x1="150" y1="250" x2="650" y2="250" />
+
+        <!-- Generator bus -->
+        <g id="generatorGroup" class="bus generator-bus">
+          <circle cx="150" cy="250" r="40" class="bus-circle" />
+          <text x="150" y="240" class="bus-label" text-anchor="middle">G</text>
+          <text x="150" y="270" class="bus-value" text-anchor="middle" id="genValue">10 MW</text>
+        </g>
+
+        <!-- Load bus -->
+        <g id="loadGroup" class="bus load-bus" style="cursor: pointer;">
+          <circle cx="650" cy="250" r="40" class="bus-circle" />
+          <text x="650" y="235" class="bus-label" text-anchor="middle">L</text>
+          <text x="650" y="255" class="bus-sub-label" text-anchor="middle">Load</text>
+          <text x="650" y="275" class="bus-value" text-anchor="middle" id="loadValue">10 MW</text>
+        </g>
+
+        <!-- Flow arrows on the line -->
+        <polygon class="flow-arrow" points="300,240 300,260 320,250" />
+        <polygon class="flow-arrow" points="450,240 450,260 470,250" />
+      </svg>
+
+      <!-- Legend -->
+      <div class="legend">
+        <div class="legend-item"><span class="dot gen-dot"></span> Generator</div>
+        <div class="legend-item"><span class="dot load-dot"></span> Load</div>
+      </div>
+    </div>
+
+    <!-- Load settings panel (hidden by default) -->
+    <div id="loadPanel" class="settings-panel hidden">
+      <div class="panel-header">
+        <h3>⚙️ Load Settings</h3>
+        <button id="closePanel" class="close-btn">&times;</button>
+      </div>
+      <div class="panel-body">
+        <div class="slider-group">
+          <label for="loadSlider">Load Demand</label>
+          <div class="slider-row">
+            <input type="range" id="loadSlider" min="0" max="50" value="10" step="0.5" />
+            <span id="loadSliderValue" class="slider-value">10 MW</span>
+          </div>
+          <div class="slider-marks">
+            <span>0 MW</span>
+            <span>25 MW</span>
+            <span>50 MW</span>
+          </div>
+        </div>
+        <div class="panel-info">
+          <div class="info-row">
+            <span>Generation</span>
+            <span id="panelGenValue">10.0 MW</span>
+          </div>
+          <div class="info-row">
+            <span>Load</span>
+            <span id="panelLoadValue">10.0 MW</span>
+          </div>
+          <div class="info-row highlight">
+            <span>Status</span>
+            <span id="panelStatus" class="status-ok">✅ Balanced</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <span>Click the <strong>Load</strong> bus to adjust demand</span>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
