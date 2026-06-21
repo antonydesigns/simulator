@@ -31,11 +31,8 @@ function simTick() {
   const f0 = 50;
 
   // --- Step 1: Governor droop (instant primary response) ---
-  // Each gen's actual output = baseSetpoint + frequency modulation
-  //   govMod = -(1/droop) × ((f - f0)/f0) × rating
-  //   gen.mw = clamp(baseSetpoint + govMod, 0, rating)
-  // govMod is POSITIVE when frequency is LOW (adds output)
-  // govMod is NEGATIVE when frequency is HIGH (reduces output)
+  // gen.mw = baseSetpoint + govMod
+  // govMod = -(1/droop) × ((f-f0)/f0) × rating  (+ when low freq, - when high)
   for (const gen of gens) {
     const droop = gen.droop || 0.04;
     const rating = gen.rating || 100;
@@ -45,10 +42,35 @@ function simTick() {
     gen.mw = Math.max(0, base + govMod);
   }
 
-  // --- Step 2: Compute imbalance & frequency change ---
   const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
   const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
-  const imbalance = totalGen - totalLoad;
+
+  // --- Step 2: Storage acts before frequency (it's part of the grid) ---
+  // Charging = consuming power, discharging = supplying power
+  let netStorage = 0; // + when discharging (supplying grid), - when charging (consuming)
+  let surplus = totalGen - totalLoad;
+
+  if (storages.length > 0 && Math.abs(surplus) > 0.001) {
+    for (const st of storages) {
+      if (surplus > 0) {
+        const rate = (st.chargeRate || 5);
+        const maxC = rate * dt;
+        const capLeft = (st.maxCapacity || 100) - (st.mw || 0);
+        const a = Math.min(maxC, surplus, capLeft);
+        if (a > 0.001) { st.mw = (st.mw || 0) + a; surplus -= a; netStorage -= a; }
+      } else {
+        const rate = (st.dischargeRate || 5);
+        const maxD = rate * dt;
+        const avail = st.mw || 0;
+        const need = -surplus;
+        const a = Math.min(maxD, need, avail);
+        if (a > 0.001) { st.mw = (st.mw || 0) - a; surplus += a; netStorage += a; }
+      }
+    }
+  }
+
+  // --- Step 3: Frequency from FULL grid balance (gens + storage - loads) ---
+  const imbalance = totalGen + netStorage - totalLoad;
 
   let totalInertiaEnergy = 0;
   for (const gen of gens) totalInertiaEnergy += (gen.inertia || 5) * (gen.rating || 100);
@@ -60,9 +82,7 @@ function simTick() {
 
   let changed = true;
 
-  // --- Step 3: Ramp base setpoint (slow secondary control) ---
-  // The base setpoint moves toward load share at rampRate.
-  // This slowly brings frequency back to 50 Hz.
+  // --- Step 4: Ramp base setpoint (slow secondary control) ---
   const targetPerGen = totalLoad / gens.length;
   for (const gen of gens) {
     const base = gen._baseSetpoint || 0;
@@ -72,29 +92,6 @@ function simTick() {
     if (Math.abs(delta) > 0.001) {
       gen._baseSetpoint = Math.max(0, base + delta);
       changed = true;
-    }
-  }
-
-  // --- Step 4: Storage charge/discharge from surplus ---
-  const totalGenFin = gens.reduce((s, g) => s + (g.mw || 0), 0);
-  let surplus = totalGenFin - totalLoad;
-
-  if (storages.length > 0 && Math.abs(surplus) > 0.001) {
-    for (const st of storages) {
-      if (surplus > 0) {
-        const rate = (st.chargeRate || 5);
-        const maxC = rate * dt;
-        const capLeft = (st.maxCapacity || 100) - (st.mw || 0);
-        const a = Math.min(maxC, surplus, capLeft);
-        if (a > 0.001) { st.mw = (st.mw || 0) + a; surplus -= a; changed = true; }
-      } else {
-        const rate = (st.dischargeRate || 5);
-        const maxD = rate * dt;
-        const avail = st.mw || 0;
-        const need = -surplus;
-        const a = Math.min(maxD, need, avail);
-        if (a > 0.001) { st.mw = (st.mw || 0) - a; surplus += a; changed = true; }
-      }
     }
   }
 
