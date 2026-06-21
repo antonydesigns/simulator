@@ -13,6 +13,7 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* ── Header ────────────────────────────────────────────────── */
@@ -20,13 +21,14 @@ header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 18px 32px;
+  padding: 12px 24px;
   background: #e2e0da;
   border-bottom: 1px solid #d0cec8;
+  flex-shrink: 0;
 }
 
 header h1 {
-  font-size: 1.25rem;
+  font-size: 1.1rem;
   font-weight: 600;
   letter-spacing: -0.02em;
   color: #3a3a3a;
@@ -35,7 +37,7 @@ header h1 {
 .badge {
   font-size: 0.7rem;
   font-weight: 500;
-  background: #e8ecf4;
+  background: #d0cec8;
   color: #4a5568;
   padding: 3px 10px;
   border-radius: 999px;
@@ -43,153 +45,162 @@ header h1 {
   letter-spacing: 0.03em;
 }
 
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.action-btn {
+  background: #d0cec8;
+  border: 1px solid #b8b6ae;
+  color: #3a3a3a;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.action-btn:hover {
+  background: #c0beb6;
+}
+
 /* ── Main layout ───────────────────────────────────────────── */
 main {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 16px 24px;
   position: relative;
-}
-
-/* ── Grid Container ── fills available space ────────────────── */
-.grid-container {
-  position: relative;
-  flex: 1;
-  width: 100%;
-  max-height: calc(100vh - 100px);
-  background: #f2f1eb;
-  border: 1px solid #d0cec8;
-  border-radius: 16px;
-  box-shadow: 0 3px 12px rgba(0,0,0,0.06);
   overflow: hidden;
 }
 
-/* Grid background lines */
-.grid-bg {
+/* ── Canvas Viewport (clips the world) ─────────────────────── */
+.canvas-viewport {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+  background: #f2f1eb;
+}
+
+.canvas-viewport:active {
+  cursor: grabbing;
+}
+
+/* ── Canvas World (pan & zoom via CSS transform) ───────────── */
+.canvas-world {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.canvas-world > * {
+  pointer-events: auto;
+}
+
+/* ── Grid background (drawn inside the world) ──────────────── */
+.canvas-grid {
+  position: absolute;
+  top: 0; left: 0;
+  width: 4000px;
+  height: 4000px;
   background-image:
     linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px),
     linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px);
   background-size: 40px 40px;
   pointer-events: none;
-  z-index: 0;
 }
 
-/* SVG overlay */
-.svg-overlay {
+/* ── SVG connections overlay ────────────────────────────────── */
+.connections-svg {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 1;
+  top: 0; left: 0;
+  width: 4000px;
+  height: 4000px;
   pointer-events: none;
+  overflow: visible;
 }
 
-.svg-overlay .bus {
-  pointer-events: auto;
+/* ── Nodes Container ────────────────────────────────────────── */
+.nodes-container {
+  position: absolute;
+  top: 0; left: 0;
+  width: 4000px;
+  height: 4000px;
 }
 
-/* ── Transmission Line ─────────────────────────────────────── */
-#transmissionLine {
-  stroke: #7a8a9a;
-  stroke-width: 4;
-  stroke-linecap: round;
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.08));
+/* ── Node (a bus) ───────────────────────────────────────────── */
+.node {
+  position: absolute;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  transform: translate(-50%, -50%);
+  transition: box-shadow 0.15s;
+  font-size: 11px;
+  font-weight: 600;
+  border-width: 3px;
+  border-style: solid;
+  background: #f2f1eb;
 }
 
-/* ── Flow arrows ───────────────────────────────────────────── */
-.flow-arrow {
-  fill: #7a8a9a;
-  opacity: 0.5;
+.node:hover {
+  filter: brightness(0.97);
 }
 
-/* ── Generator Bus ─────────────────────────────────────────── */
-.generator-bus .bus-circle {
-  fill: #f2f1eb;
-  stroke: #2d6a4f;
-  stroke-width: 3.5;
-  filter: drop-shadow(0 2px 6px rgba(45, 106, 79, 0.2));
+.node.generator {
+  border-color: #2d6a4f;
+  color: #2d6a4f;
+  box-shadow: 0 2px 8px rgba(45, 106, 79, 0.2);
 }
 
-.generator-bus .bus-label {
+.node.load {
+  border-color: #d62828;
+  color: #d62828;
+  box-shadow: 0 2px 8px rgba(214, 40, 40, 0.2);
+}
+
+.node .symbol {
   font-size: 20px;
   font-weight: 700;
-  fill: #2d6a4f;
+  line-height: 1;
 }
 
-.generator-bus .bus-value {
-  font-size: 11px;
-  font-weight: 600;
-  fill: #2d6a4f;
-}
-
-/* ── Load Bus ──────────────────────────────────────────────── */
-.load-bus .bus-circle {
-  fill: #f2f1eb;
-  stroke: #d62828;
-  stroke-width: 3.5;
-  filter: drop-shadow(0 2px 6px rgba(214, 40, 40, 0.2));
-  transition: filter 0.2s ease;
-}
-
-.load-bus:hover .bus-circle {
-  filter: drop-shadow(0 2px 12px rgba(214, 40, 40, 0.35));
-}
-
-.load-bus .bus-label {
-  font-size: 18px;
-  font-weight: 700;
-  fill: #d62828;
-}
-
-.load-bus .bus-sub-label {
-  font-size: 10px;
+.node .sub {
+  font-size: 9px;
   font-weight: 500;
-  fill: #777;
+  color: #777;
+  margin-top: 1px;
 }
 
-.load-bus .bus-value {
-  font-size: 11px;
+.node .value {
+  font-size: 10px;
   font-weight: 600;
-  fill: #d62828;
+  margin-top: 1px;
 }
 
-/* ── Legend ─────────────────────────────────────────────────── */
-.legend {
-  position: absolute;
-  bottom: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 20px;
-  background: rgba(242,241,235,0.88);
-  backdrop-filter: blur(4px);
-  padding: 6px 16px;
-  border-radius: 8px;
-  font-size: 0.75rem;
-  z-index: 2;
-  border: 1px solid #d0cec8;
+/* ── Connection line ────────────────────────────────────────── */
+.connection-line {
+  stroke: #7a8a9a;
+  stroke-width: 3;
+  stroke-linecap: round;
+  fill: none;
 }
 
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #4a5568;
-}
-
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.gen-dot { background: #2d6a4f; }
-.load-dot { background: #d62828; }
+.connection-line.balanced { stroke: #2d6a4f; }
+.connection-line.moderate { stroke: #e09f3e; stroke-width: 4; }
+.connection-line.overloaded { stroke: #d62828; stroke-width: 5; }
 
 /* ── Zoom Controls ──────────────────────────────────────────── */
 .zoom-controls {
@@ -204,7 +215,7 @@ main {
   border: 1px solid #d0cec8;
   border-radius: 8px;
   padding: 4px 6px;
-  z-index: 3;
+  z-index: 10;
 }
 
 .zoom-btn {
@@ -223,13 +234,8 @@ main {
   transition: background 0.15s;
 }
 
-.zoom-btn:hover {
-  background: #d0cec8;
-}
-
-.zoom-btn.zoom-reset {
-  font-size: 1rem;
-}
+.zoom-btn:hover { background: #d0cec8; }
+.zoom-btn.zoom-reset { font-size: 1rem; }
 
 .zoom-level {
   min-width: 44px;
@@ -239,29 +245,12 @@ main {
   color: #4a4a4a;
 }
 
-/* ── SVG cursors ────────────────────────────────────────────── */
-.svg-overlay {
-  cursor: grab;
-}
-
-.svg-overlay:active {
-  cursor: grabbing;
-}
-
-.svg-overlay .bus {
-  cursor: pointer;
-}
-
-.svg-overlay .bus:active {
-  cursor: grabbing;
-}
-
-/* ── Settings Modal (draggable floating) ────────────────────── */
+/* ── Settings Modal ─────────────────────────────────────────── */
 .settings-modal {
   position: fixed;
   top: 120px;
   right: 40px;
-  width: 300px;
+  width: 280px;
   background: #f2f1eb;
   border: 1px solid #c8c6be;
   border-radius: 12px;
@@ -271,9 +260,7 @@ main {
   user-select: none;
 }
 
-.settings-modal.hidden {
-  display: none;
-}
+.settings-modal.hidden { display: none; }
 
 .modal-header {
   display: flex;
@@ -285,9 +272,7 @@ main {
   background: #e6e5df;
 }
 
-.modal-header:active {
-  cursor: grabbing;
-}
+.modal-header:active { cursor: grabbing; }
 
 .modal-header h3 {
   font-size: 0.85rem;
@@ -306,18 +291,11 @@ main {
   transition: color 0.15s;
 }
 
-.close-btn:hover {
-  color: #333;
-}
+.close-btn:hover { color: #333; }
 
-.modal-body {
-  padding: 16px;
-}
+.modal-body { padding: 16px; }
 
-/* ── Slider ─────────────────────────────────────────────────── */
-.slider-group {
-  margin-bottom: 20px;
-}
+.slider-group { margin-bottom: 16px; }
 
 .slider-group label {
   display: block;
@@ -353,11 +331,6 @@ input[type="range"]::-webkit-slider-thumb {
   border: 2px solid #d62828;
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(0,0,0,0.15);
-  transition: box-shadow 0.15s;
-}
-
-input[type="range"]::-webkit-slider-thumb:hover {
-  box-shadow: 0 2px 8px rgba(214, 40, 40, 0.3);
 }
 
 input[type="range"]::-moz-range-thumb {
@@ -367,7 +340,6 @@ input[type="range"]::-moz-range-thumb {
   background: #ffffff;
   border: 2px solid #d62828;
   cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
 }
 
 .slider-value {
@@ -387,57 +359,37 @@ input[type="range"]::-moz-range-thumb {
   padding: 0 2px;
 }
 
-/* ── Panel Info ─────────────────────────────────────────────── */
-.panel-info {
-  border-top: 1px solid #d0cec8;
-  padding-top: 16px;
-}
+.panel-info { border-top: 1px solid #d0cec8; padding-top: 14px; }
 
 .info-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 6px 0;
+  padding: 5px 0;
   font-size: 0.85rem;
 }
 
-.info-row span:first-child {
-  color: #666;
-  font-weight: 500;
-}
-
-.info-row span:last-child {
-  font-weight: 600;
-  color: #1a1a2e;
-}
+.info-row span:first-child { color: #666; font-weight: 500; }
+.info-row span:last-child { font-weight: 600; color: #1a1a2e; }
 
 .info-row.highlight {
   background: #e6e5df;
-  margin: 0 -20px;
-  padding: 10px 20px;
+  margin: 0 -16px;
+  padding: 8px 16px;
   border-radius: 6px;
 }
 
-.status-ok {
-  color: #2d6a4f !important;
-}
-
-.status-warn {
-  color: #e09f3e !important;
-}
-
-.status-overload {
-  color: #d62828 !important;
-}
+.status-ok { color: #2d6a4f !important; }
+.status-warn { color: #e09f3e !important; }
+.status-overload { color: #d62828 !important; }
 
 /* ── Footer ─────────────────────────────────────────────────── */
 footer {
   text-align: center;
-  padding: 12px;
-  font-size: 0.78rem;
+  padding: 8px;
+  font-size: 0.75rem;
   color: #888;
-}
-
-footer strong {
-  color: #d62828;
+  flex-shrink: 0;
+  background: #e2e0da;
+  border-top: 1px solid #d0cec8;
 }
