@@ -104,7 +104,7 @@ function drawGrid() {
   const endX = bottomRight.x;
   const endY = bottomRight.y;
 
-  ctx.strokeStyle = '#1e1e2e';
+  ctx.strokeStyle = '#ddd8ce';
   ctx.lineWidth = 1;
 
   for (let wx = startX; wx <= endX; wx += GRID_SIZE) {
@@ -133,7 +133,7 @@ function drawConnections() {
     const t = worldToScreen(target.x, target.y);
 
     ctx.beginPath();
-    ctx.strokeStyle = '#4a4a5a';
+    ctx.strokeStyle = '#7a766e';
     ctx.lineWidth = 2;
     ctx.moveTo(s.x, s.y);
     ctx.lineTo(t.x, t.y);
@@ -155,25 +155,25 @@ function drawNodes() {
     if (isPending) {
       ctx.beginPath();
       ctx.arc(p.x, p.y, r + 8, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(74, 158, 255, 0.08)';
+      ctx.fillStyle = 'rgba(122, 158, 192, 0.10)';
       ctx.fill();
     }
 
     // Node circle
-    const fillColor = node.type === 'generator' ? '#27ae60'
-                    : node.type === 'junction' ? '#6a6a7a'
-                    : '#d4891a';
+    const fillColor = node.type === 'generator' ? '#6aaa64'
+                    : node.type === 'junction' ? '#b0aca2'
+                    : '#ca9440';
     ctx.beginPath();
     ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.fillStyle = fillColor;
     ctx.fill();
-    ctx.strokeStyle = sel || isPending ? '#4a9eff' : '#5a5a6a';
+    ctx.strokeStyle = sel || isPending ? '#7a9ec0' : '#8a867e';
     ctx.lineWidth = (sel || isPending) ? 3 : 1.5;
     ctx.stroke();
 
     // Label
     const labelSize = Math.max(10, 11 * v.scale);
-    ctx.fillStyle = '#b0b0bc';
+    ctx.fillStyle = '#6a665e';
     ctx.font = `${labelSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
@@ -197,7 +197,7 @@ function drawPendingLine() {
 
   ctx.beginPath();
   ctx.setLineDash([6, 4]);
-  ctx.strokeStyle = '#4a9eff';
+  ctx.strokeStyle = '#7a9ec0';
   ctx.lineWidth = 2;
   ctx.moveTo(s.x, s.y);
   ctx.lineTo(m.x, m.y);
@@ -212,9 +212,9 @@ function drawHoverDot() {
 
   ctx.beginPath();
   ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(120, 120, 140, 0.4)';
+  ctx.fillStyle = 'rgba(160, 156, 148, 0.4)';
   ctx.fill();
-  ctx.strokeStyle = 'rgba(120, 120, 140, 0.5)';
+  ctx.strokeStyle = 'rgba(160, 156, 148, 0.5)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
 }
@@ -235,12 +235,12 @@ function drawSelectionRect() {
   ctx.beginPath();
   ctx.rect(left, top, w, h);
   ctx.setLineDash([6, 4]);
-  ctx.strokeStyle = '#4a9eff';
+  ctx.strokeStyle = '#7a9ec0';
   ctx.lineWidth = 1.5;
   ctx.stroke();
   ctx.setLineDash([]);
 
-  ctx.fillStyle = 'rgba(74, 158, 255, 0.05)';
+  ctx.fillStyle = 'rgba(122, 158, 192, 0.06)';
   ctx.fillRect(left, top, w, h);
 }
 
