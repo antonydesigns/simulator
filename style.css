@@ -8,8 +8,8 @@
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,
     Ubuntu, Cantarell, sans-serif;
-  background: #f5f7fa;
-  color: #1a1a2e;
+  background: #eae9e3;
+  color: #2c2c2c;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -21,15 +21,15 @@ header {
   align-items: center;
   gap: 12px;
   padding: 18px 32px;
-  background: #ffffff;
-  border-bottom: 1px solid #e0e4e8;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  background: #e2e0da;
+  border-bottom: 1px solid #d0cec8;
 }
 
 header h1 {
   font-size: 1.25rem;
   font-weight: 600;
   letter-spacing: -0.02em;
+  color: #3a3a3a;
 }
 
 .badge {
@@ -59,10 +59,10 @@ main {
   width: 100%;
   max-width: 800px;
   aspect-ratio: 800 / 500;
-  background: #ffffff;
-  border: 1px solid #e0e4e8;
+  background: #f2f1eb;
+  border: 1px solid #d0cec8;
   border-radius: 16px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+  box-shadow: 0 3px 12px rgba(0,0,0,0.06);
   overflow: hidden;
 }
 
@@ -71,8 +71,8 @@ main {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(rgba(0,0,0,0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,0,0,0.04) 1px, transparent 1px);
+    linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px);
   background-size: 40px 40px;
   pointer-events: none;
   z-index: 0;
@@ -94,7 +94,7 @@ main {
 
 /* ── Transmission Line ─────────────────────────────────────── */
 #transmissionLine {
-  stroke: #8899aa;
+  stroke: #7a8a9a;
   stroke-width: 4;
   stroke-linecap: round;
   filter: drop-shadow(0 1px 2px rgba(0,0,0,0.08));
@@ -102,13 +102,13 @@ main {
 
 /* ── Flow arrows ───────────────────────────────────────────── */
 .flow-arrow {
-  fill: #8899aa;
+  fill: #7a8a9a;
   opacity: 0.5;
 }
 
 /* ── Generator Bus ─────────────────────────────────────────── */
 .generator-bus .bus-circle {
-  fill: #ffffff;
+  fill: #f2f1eb;
   stroke: #2d6a4f;
   stroke-width: 3.5;
   filter: drop-shadow(0 2px 6px rgba(45, 106, 79, 0.2));
@@ -128,7 +128,7 @@ main {
 
 /* ── Load Bus ──────────────────────────────────────────────── */
 .load-bus .bus-circle {
-  fill: #ffffff;
+  fill: #f2f1eb;
   stroke: #d62828;
   stroke-width: 3.5;
   filter: drop-shadow(0 2px 6px rgba(214, 40, 40, 0.2));
@@ -165,13 +165,13 @@ main {
   transform: translateX(-50%);
   display: flex;
   gap: 20px;
-  background: rgba(255,255,255,0.85);
+  background: rgba(242,241,235,0.88);
   backdrop-filter: blur(4px);
   padding: 6px 16px;
   border-radius: 8px;
   font-size: 0.75rem;
   z-index: 2;
-  border: 1px solid #e0e4e8;
+  border: 1px solid #d0cec8;
 }
 
 .legend-item {
@@ -196,10 +196,10 @@ main {
   width: 100%;
   max-width: 800px;
   margin-top: 16px;
-  background: #ffffff;
-  border: 1px solid #e0e4e8;
+  background: #f2f1eb;
+  border: 1px solid #d0cec8;
   border-radius: 12px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  box-shadow: 0 3px 12px rgba(0,0,0,0.06);
   overflow: hidden;
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
@@ -213,7 +213,7 @@ main {
   justify-content: space-between;
   align-items: center;
   padding: 14px 20px;
-  border-bottom: 1px solid #e8ecf0;
+  border-bottom: 1px solid #d0cec8;
 }
 
 .panel-header h3 {
@@ -315,7 +315,7 @@ input[type="range"]::-moz-range-thumb {
 
 /* ── Panel Info ─────────────────────────────────────────────── */
 .panel-info {
-  border-top: 1px solid #e8ecf0;
+  border-top: 1px solid #d0cec8;
   padding-top: 16px;
 }
 
@@ -338,7 +338,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .info-row.highlight {
-  background: #f8f9fc;
+  background: #e6e5df;
   margin: 0 -20px;
   padding: 10px 20px;
   border-radius: 6px;
