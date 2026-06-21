@@ -37,6 +37,18 @@ const DRAG_THRESHOLD = 4; // screen px before drag/pan/select starts
 const canvas = document.getElementById('grid-canvas');
 const ctx = canvas.getContext('2d');
 const menu = document.getElementById('context-menu');
+const menuItems = document.getElementById('context-menu-items');
+
+const settingsPanel = document.getElementById('settings-panel');
+const settingsTitle = document.getElementById('settings-title');
+const mwSlider = document.getElementById('mw-slider');
+const mwValue = document.getElementById('mw-value');
+const settingsClose = document.getElementById('settings-close');
+
+let settingsNodeId = null; // node being edited
+let settingsDrag = false;
+let settingsResize = false;
+let settingsDragOff = { x: 0, y: 0 };
 
 // ─── Sizing ────────────────────────────────────────────────────────────
 
@@ -184,6 +196,15 @@ function drawNodes() {
     else label = 'L';
     label += (node.label || node.id.slice(-3));
     ctx.fillText(label, p.x, p.y + r + 4);
+
+    // MW value below the label
+    if (node.type !== 'junction' && node.mw !== undefined) {
+      const mwSize = Math.max(9, 10 * v.scale);
+      ctx.fillStyle = '#8a867e';
+      ctx.font = `${mwSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.textBaseline = 'top';
+      ctx.fillText(node.mw + 'MW', p.x, p.y + r + 4 + labelSize + 2);
+    }
   }
 }
 
@@ -349,7 +370,7 @@ function uid() {
 // ─── Add Node ──────────────────────────────────────────────────────────
 
 function addNode(type, wx, wy) {
-  const node = { id: uid(), type, x: wx, y: wy, label: '' };
+  const node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0 };
   state.nodes.push(node);
   state.selectedNodeIds = new Set([node.id]);
   persist();
@@ -449,15 +470,34 @@ async function load() {
 
 // ─── Context Menu ──────────────────────────────────────────────────────
 
-function showMenu(e) {
+function showMenu(e, nodeHit) {
   e.preventDefault();
   const world = mouseToWorld(e);
 
   menu.dataset.wx = world.x;
   menu.dataset.wy = world.y;
+  menu.dataset.nodeId = nodeHit ? nodeHit.id : '';
+
+  // Build menu items dynamically
+  menuItems.innerHTML = '';
+
+  if (nodeHit && nodeHit.type !== 'junction') {
+    // Node-specific menu
+    addMenuItem('Open settings', 'open-settings');
+    addMenuSeparator();
+    addMenuItem('Delete', 'delete-node');
+  } else if (nodeHit && nodeHit.type === 'junction') {
+    addMenuItem('Delete', 'delete-node');
+  } else {
+    // Empty space menu
+    addMenuItem('+ Generator', 'add-generator');
+    addMenuItem('+ Load', 'add-load');
+    addMenuSeparator();
+    addMenuItem('+ Junction', 'add-junction');
+  }
 
   const menuW = 160;
-  const menuH = 80;
+  const menuH = menuItems.children.length * 36 + 8;
   let mx = e.clientX;
   let my = e.clientY;
   if (mx + menuW > window.innerWidth) mx = window.innerWidth - menuW - 8;
@@ -468,6 +508,20 @@ function showMenu(e) {
   menu.classList.remove('hidden');
 }
 
+function addMenuItem(text, action) {
+  const div = document.createElement('div');
+  div.className = 'context-menu-item';
+  div.dataset.action = action;
+  div.textContent = text;
+  menuItems.appendChild(div);
+}
+
+function addMenuSeparator() {
+  const div = document.createElement('div');
+  div.className = 'context-menu-separator';
+  menuItems.appendChild(div);
+}
+
 function hideMenu() {
   menu.classList.add('hidden');
 }
@@ -476,7 +530,9 @@ function hideMenu() {
 
 // --- Right-click ---
 canvas.addEventListener('contextmenu', (e) => {
-  showMenu(e);
+  const world = mouseToWorld(e);
+  const hit = hitNode(world.x, world.y);
+  showMenu(e, hit);
 });
 
 // --- Keyboard: space down/up ---
@@ -721,23 +777,29 @@ canvas.addEventListener('wheel', (e) => {
   draw();
 }, { passive: false });
 
-// --- Menu actions ---
-document.querySelectorAll('.context-menu-item').forEach(item => {
-  item.addEventListener('click', () => {
-    const action = item.dataset.action;
-    const wx = parseFloat(menu.dataset.wx);
-    const wy = parseFloat(menu.dataset.wy);
+// --- Menu actions (delegated) ---
+menu.addEventListener('click', (e) => {
+  const item = e.target.closest('.context-menu-item');
+  if (!item) return;
 
-    if (action === 'add-generator') {
-      addNode('generator', wx, wy);
-    } else if (action === 'add-load') {
-      addNode('load', wx, wy);
-    } else if (action === 'add-junction') {
-      addNode('junction', wx, wy);
-    }
+  const action = item.dataset.action;
+  const wx = parseFloat(menu.dataset.wx);
+  const wy = parseFloat(menu.dataset.wy);
+  const nodeId = menu.dataset.nodeId;
 
-    hideMenu();
-  });
+  if (action === 'add-generator') {
+    addNode('generator', wx, wy);
+  } else if (action === 'add-load') {
+    addNode('load', wx, wy);
+  } else if (action === 'add-junction') {
+    addNode('junction', wx, wy);
+  } else if (action === 'open-settings') {
+    openSettings(nodeId);
+  } else if (action === 'delete-node') {
+    if (nodeId) deleteNode(nodeId);
+  }
+
+  hideMenu();
 });
 
 // Hide menu on any click outside
@@ -772,10 +834,113 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ─── Settings Panel ────────────────────────────────────────────────────
+
+function openSettings(nodeId) {
+  const node = state.nodes.find(n => n.id === nodeId);
+  if (!node || node.type === 'junction') return;
+
+  settingsNodeId = node.id;
+  settingsTitle.textContent = node.type === 'generator' ? 'Generator' : 'Load';
+
+  // Set slider to match node's MW value
+  const mw = node.mw || 0;
+  mwSlider.value = mw;
+  mwValue.textContent = mw;
+
+  // Position panel centered-ish on screen
+  const rect = settingsPanel.getBoundingClientRect();
+  const pw = rect.width || 260;
+  const ph = rect.height || 170;
+  settingsPanel.style.left = Math.max(20, (window.innerWidth - pw) / 2) + 'px';
+  settingsPanel.style.top = Math.max(20, (window.innerHeight - ph) / 2) + 'px';
+
+  settingsPanel.classList.remove('hidden');
+}
+
+function closeSettings() {
+  settingsPanel.classList.add('hidden');
+  settingsNodeId = null;
+}
+
+// Slider input → update node MW
+mwSlider.addEventListener('input', () => {
+  const val = parseInt(mwSlider.value, 10);
+  mwValue.textContent = val;
+  const node = state.nodes.find(n => n.id === settingsNodeId);
+  if (node) {
+    node.mw = val;
+    draw();
+  }
+});
+
+mwSlider.addEventListener('change', () => {
+  persist();
+});
+
+settingsClose.addEventListener('click', closeSettings);
+
+// ─── Settings panel: drag by header ---
+
+settingsPanel.addEventListener('mousedown', (e) => {
+  const header = e.target.closest('.settings-header');
+  if (!header) return;
+  settingsDrag = true;
+  settingsDragOff = { x: e.clientX - settingsPanel.offsetLeft, y: e.clientY - settingsPanel.offsetTop };
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (settingsDrag) {
+    settingsPanel.style.left = (e.clientX - settingsDragOff.x) + 'px';
+    settingsPanel.style.top = (e.clientY - settingsDragOff.y) + 'px';
+  }
+});
+
+document.addEventListener('mouseup', () => {
+  settingsDrag = false;
+  settingsResize = false;
+});
+
+// ─── Settings panel: resize by corner handle ---
+
+settingsPanel.addEventListener('mousedown', (e) => {
+  const handle = e.target.closest('.settings-resize-handle');
+  if (!handle) return;
+  settingsResize = true;
+  settingsDragOff = { x: e.clientX, y: e.clientY };
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (settingsResize) {
+    const dw = e.clientX - settingsDragOff.x;
+    const dh = e.clientY - settingsDragOff.y;
+    const newW = Math.max(220, settingsPanel.offsetWidth + dw);
+    const newH = Math.max(140, settingsPanel.offsetHeight + dh);
+    settingsPanel.style.width = newW + 'px';
+    settingsPanel.style.height = newH + 'px';
+    settingsDragOff = { x: e.clientX, y: e.clientY };
+  }
+});
+
+// Close settings on Escape
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeSettings();
+  }
+});
+
 // ─── Init ──────────────────────────────────────────────────────────────
 
 async function init() {
   await load();
+
+  // Ensure nodes loaded from storage have mw property
+  for (const node of state.nodes) {
+    if (node.mw === undefined) node.mw = 0;
+  }
+
   resizeCanvas();
   draw();
 }

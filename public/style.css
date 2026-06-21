@@ -25,7 +25,8 @@ html, body {
   cursor: crosshair;
 }
 
-/* Context Menu */
+/* ─── Context Menu ──────────────────────────────────────────────── */
+
 .context-menu {
   position: fixed;
   background: #f5f2eb;
@@ -62,4 +63,145 @@ html, body {
   height: 1px;
   margin: 4px 8px;
   background: #d6d2c8;
+}
+
+/* ─── Settings Panel ──────────────────────────────────────────────── */
+
+.settings-panel {
+  position: fixed;
+  z-index: 1001;
+  background: #f5f2eb;
+  border: 1px solid #d6d2c8;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.10);
+  min-width: 220px;
+  min-height: 140px;
+  width: 260px;
+  height: 170px;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+}
+
+.settings-panel.hidden {
+  display: none;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #e8e4da;
+  border-radius: 9px 9px 0 0;
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.settings-header:active {
+  cursor: grabbing;
+}
+
+.settings-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #555;
+}
+
+.settings-close {
+  font-size: 20px;
+  line-height: 1;
+  color: #888;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.settings-close:hover {
+  color: #555;
+}
+
+.settings-body {
+  padding: 16px 14px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #777;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.settings-slider-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Lever / Slider */
+.mw-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: #d6d2c8;
+  outline: none;
+  cursor: pointer;
+}
+
+.mw-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #b0aca2;
+  border: 2px solid #8a867e;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.mw-slider::-webkit-slider-thumb:hover {
+  background: #8a867e;
+}
+
+.mw-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #b0aca2;
+  border: 2px solid #8a867e;
+  cursor: pointer;
+}
+
+.mw-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #555;
+  min-width: 50px;
+  text-align: right;
+}
+
+/* Resize handle */
+.settings-resize-handle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, #d6d2c8 50%);
+  border-radius: 0 0 8px 0;
 }
