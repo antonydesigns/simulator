@@ -54,7 +54,7 @@ function updateViewBox() {
   if (zoomLevel) zoomLevel.textContent = `${Math.round(scale * 100)}%`;
 }
 
-// ─── Update bus positions in SVG ────────────────────────────
+// ─── Update bus positions & arrows in SVG ───────────────────
 function updateBusPositions() {
   genCircle.setAttribute('cx', buses.gen.cx);
   genCircle.setAttribute('cy', buses.gen.cy);
@@ -77,6 +77,25 @@ function updateBusPositions() {
   transmissionLine.setAttribute('y1', buses.gen.cy);
   transmissionLine.setAttribute('x2', buses.load.cx);
   transmissionLine.setAttribute('y2', buses.load.cy);
+
+  // Update flow arrows — always point toward load
+  const dx = buses.load.cx - buses.gen.cx;
+  const dy = buses.load.cy - buses.gen.cy;
+  const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+  const len = Math.sqrt(dx * dx + dy * dy);
+  const size = 12;
+
+  for (const [id, t] of [['arrow1', 0.35], ['arrow2', 0.65]]) {
+    const cx = buses.gen.cx + dx * t;
+    const cy = buses.gen.cy + dy * t;
+    const arrow = document.getElementById(id);
+    const p1x = cx - size, p1y = cy - size / 2;
+    const p2x = cx - size, p2y = cy + size / 2;
+    const p3x = cx, p3y = cy;
+    // Use a transform to rotate around the tip (p3)
+    arrow.setAttribute('points', `${p1x},${p1y} ${p2x},${p2y} ${p3x},${p3y}`);
+    arrow.setAttribute('transform', `rotate(${angle} ${cx} ${cy})`);
+  }
 }
 
 // ─── Convert screen to SVG coordinates ──────────────────────
@@ -198,13 +217,10 @@ function onPointerMove(e) {
     viewY = dragStartPos.vy - dy * factor;
     updateViewBox();
   } else {
-    // Drag bus
-    const cur = screenToSVG(e.clientX, e.clientY);
-    const start = screenToSVG(dragStartMouse.sx, dragStartMouse.sy);
-    const dSvgX = cur.x - start.x;
-    const dSvgY = cur.y - start.y;
-    buses[dragTarget].cx = dragStartPos.cx + dSvgX;
-    buses[dragTarget].cy = dragStartPos.cy + dSvgY;
+    // Drag bus — direct 1:1 mapping from mouse to SVG coords
+    const svgPos = screenToSVG(e.clientX, e.clientY);
+    buses[dragTarget].cx = svgPos.x;
+    buses[dragTarget].cy = svgPos.y;
     updateBusPositions();
   }
 }
