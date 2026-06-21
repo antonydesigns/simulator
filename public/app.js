@@ -39,16 +39,12 @@ const ctx = canvas.getContext('2d');
 const menu = document.getElementById('context-menu');
 const menuItems = document.getElementById('context-menu-items');
 
-const settingsPanel = document.getElementById('settings-panel');
-const settingsTitle = document.getElementById('settings-title');
-const mwSlider = document.getElementById('mw-slider');
-const mwValue = document.getElementById('mw-value');
-const settingsClose = document.getElementById('settings-close');
+const openPanels = {}; // nodeId -> { panel, slider, valueEl }
 
-let settingsNodeId = null; // node being edited
-let settingsDrag = false;
-let settingsResize = false;
-let settingsDragOff = { x: 0, y: 0 };
+let dragPanel = null;
+let dragOff = { x: 0, y: 0 };
+let resizePanel = null;
+let resizeStart = { x: 0, y: 0, w: 0, h: 0 };
 
 // ─── Sizing ────────────────────────────────────────────────────────────
 
@@ -387,6 +383,7 @@ function deleteNode(id) {
   );
   state.selectedNodeIds.delete(id);
   if (state.pendingSourceId === id) state.pendingSourceId = null;
+  closeSettings(id); // close any open settings panel for this node
   persist();
   draw();
 }
@@ -827,6 +824,7 @@ document.addEventListener('keydown', (e) => {
         c => c.sourceId !== id && c.targetId !== id
       );
       if (state.pendingSourceId === id) state.pendingSourceId = null;
+      closeSettings(id);
     }
     state.selectedNodeIds = new Set();
     persist();
@@ -834,100 +832,122 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ─── Settings Panel ────────────────────────────────────────────────────
+// ─── Settings Panels (multiple, one per node) ───────────────────────────
 
 function openSettings(nodeId) {
   const node = state.nodes.find(n => n.id === nodeId);
   if (!node || node.type === 'junction') return;
 
-  settingsNodeId = node.id;
-  settingsTitle.textContent = node.type === 'generator' ? 'Generator' : 'Load';
+  // Already open — bring to front
+  if (openPanels[nodeId]) {
+    openPanels[nodeId].panel.style.zIndex = Date.now();
+    return;
+  }
 
-  // Set slider to match node's MW value
-  const mw = node.mw || 0;
-  mwSlider.value = mw;
-  mwValue.textContent = mw;
+  const panel = document.createElement('div');
+  panel.className = 'settings-panel';
+  panel.dataset.nodeId = nodeId;
+  panel.style.zIndex = Date.now();
 
-  // Position panel centered-ish on screen
-  const rect = settingsPanel.getBoundingClientRect();
-  const pw = rect.width || 260;
-  const ph = rect.height || 170;
-  settingsPanel.style.left = Math.max(20, (window.innerWidth - pw) / 2) + 'px';
-  settingsPanel.style.top = Math.max(20, (window.innerHeight - ph) / 2) + 'px';
+  const label = node.type === 'generator' ? 'Generator' : 'Load';
+  const idLabel = node.label || node.id.slice(-4);
 
-  settingsPanel.classList.remove('hidden');
-}
+  panel.innerHTML = `
+    <div class="settings-header">
+      <span class="settings-title">${label} ${idLabel}</span>
+      <span class="settings-close" data-action="close-settings">&times;</span>
+    </div>
+    <div class="settings-body">
+      <div class="settings-row">
+        <label class="settings-label">MW</label>
+        <div class="settings-slider-group">
+          <input type="range" class="mw-slider" min="0" max="1000" step="10" value="${node.mw || 0}">
+          <span class="mw-value">${node.mw || 0}</span>
+        </div>
+      </div>
+    </div>
+    <div class="settings-resize-handle"></div>
+  `;
 
-function closeSettings() {
-  settingsPanel.classList.add('hidden');
-  settingsNodeId = null;
-}
+  // Cascade position so multiple panels don't overlap exactly
+  const count = Object.keys(openPanels).length;
+  panel.style.left = (120 + count * 28) + 'px';
+  panel.style.top = (80 + count * 28) + 'px';
 
-// Slider input → update node MW
-mwSlider.addEventListener('input', () => {
-  const val = parseInt(mwSlider.value, 10);
-  mwValue.textContent = val;
-  const node = state.nodes.find(n => n.id === settingsNodeId);
-  if (node) {
+  document.body.appendChild(panel);
+
+  const slider = panel.querySelector('.mw-slider');
+  const valueEl = panel.querySelector('.mw-value');
+
+  // Slider → update node MW in real-time
+  slider.addEventListener('input', () => {
+    const val = parseInt(slider.value, 10);
+    valueEl.textContent = val;
     node.mw = val;
     draw();
-  }
-});
+  });
+  slider.addEventListener('change', () => persist());
 
-mwSlider.addEventListener('change', () => {
-  persist();
-});
+  // Close button
+  panel.querySelector('[data-action="close-settings"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeSettings(nodeId);
+  });
 
-settingsClose.addEventListener('click', closeSettings);
+  // Drag from header
+  panel.addEventListener('mousedown', (e) => {
+    const header = e.target.closest('.settings-header');
+    if (!header) return;
+    dragPanel = panel;
+    dragOff = { x: e.clientX - panel.offsetLeft, y: e.clientY - panel.offsetTop };
+    panel.style.zIndex = Date.now();
+    e.preventDefault();
+  });
 
-// ─── Settings panel: drag by header ---
+  // Resize from corner handle
+  panel.addEventListener('mousedown', (e) => {
+    const handle = e.target.closest('.settings-resize-handle');
+    if (!handle) return;
+    resizePanel = panel;
+    resizeStart = { x: e.clientX, y: e.clientY, w: panel.offsetWidth, h: panel.offsetHeight };
+    panel.style.zIndex = Date.now();
+    e.preventDefault();
+  });
 
-settingsPanel.addEventListener('mousedown', (e) => {
-  const header = e.target.closest('.settings-header');
-  if (!header) return;
-  settingsDrag = true;
-  settingsDragOff = { x: e.clientX - settingsPanel.offsetLeft, y: e.clientY - settingsPanel.offsetTop };
-  e.preventDefault();
-});
+  openPanels[nodeId] = { panel, slider, valueEl };
+}
 
+function closeSettings(nodeId) {
+  const entry = openPanels[nodeId];
+  if (!entry) return;
+  entry.panel.remove();
+  delete openPanels[nodeId];
+}
+
+// Document-level drag/resize handlers
 document.addEventListener('mousemove', (e) => {
-  if (settingsDrag) {
-    settingsPanel.style.left = (e.clientX - settingsDragOff.x) + 'px';
-    settingsPanel.style.top = (e.clientY - settingsDragOff.y) + 'px';
+  if (dragPanel) {
+    dragPanel.style.left = (e.clientX - dragOff.x) + 'px';
+    dragPanel.style.top = (e.clientY - dragOff.y) + 'px';
+  }
+  if (resizePanel) {
+    const dw = e.clientX - resizeStart.x;
+    const dh = e.clientY - resizeStart.y;
+    resizePanel.style.width = Math.max(220, resizeStart.w + dw) + 'px';
+    resizePanel.style.height = Math.max(140, resizeStart.h + dh) + 'px';
   }
 });
 
 document.addEventListener('mouseup', () => {
-  settingsDrag = false;
-  settingsResize = false;
+  dragPanel = null;
+  resizePanel = null;
 });
 
-// ─── Settings panel: resize by corner handle ---
-
-settingsPanel.addEventListener('mousedown', (e) => {
-  const handle = e.target.closest('.settings-resize-handle');
-  if (!handle) return;
-  settingsResize = true;
-  settingsDragOff = { x: e.clientX, y: e.clientY };
-  e.preventDefault();
-});
-
-document.addEventListener('mousemove', (e) => {
-  if (settingsResize) {
-    const dw = e.clientX - settingsDragOff.x;
-    const dh = e.clientY - settingsDragOff.y;
-    const newW = Math.max(220, settingsPanel.offsetWidth + dw);
-    const newH = Math.max(140, settingsPanel.offsetHeight + dh);
-    settingsPanel.style.width = newW + 'px';
-    settingsPanel.style.height = newH + 'px';
-    settingsDragOff = { x: e.clientX, y: e.clientY };
-  }
-});
-
-// Close settings on Escape
+// Close all settings panels on Escape
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    closeSettings();
+    const ids = Object.keys(openPanels);
+    for (const id of ids) closeSettings(id);
   }
 });
 
