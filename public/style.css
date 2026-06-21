@@ -247,6 +247,36 @@ html, body {
   text-align: right;
 }
 
+/* Storage sliders — same styling */
+.charge-slider, .discharge-slider, .capacity-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: #d6d2c8;
+  outline: none;
+  cursor: pointer;
+}
+.charge-slider::-webkit-slider-thumb, .discharge-slider::-webkit-slider-thumb, .capacity-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #b0aca2;
+  border: 2px solid #8a867e;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.charge-slider::-webkit-slider-thumb:hover, .discharge-slider::-webkit-slider-thumb:hover, .capacity-slider::-webkit-slider-thumb:hover { background: #8a867e; }
+.charge-slider::-moz-range-thumb, .discharge-slider::-moz-range-thumb, .capacity-slider::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%; background: #b0aca2; border: 2px solid #8a867e; cursor: pointer;
+}
+.charge-value, .discharge-value, .capacity-value {
+  font-size: 18px; font-weight: 600; color: #555; min-width: 40px; text-align: right;
+}
+
 /* Resize handle */
 .settings-resize-handle {
   position: absolute;
