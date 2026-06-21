@@ -3,29 +3,34 @@
 const state = {
   nodes: [],
   connections: [],
-  selectedNodeId: null,
+  selectedNodeIds: new Set(),
   pendingSourceId: null,
   hoverLine: null,       // { x, y, conn } — closest point on a line
   view: { x: 0, y: 0, scale: 1 },
+  spaceDown: false,
 };
 
 // ─── Pointer state (not persisted) ────────────────────────────────────
 
 const ptr = {
   downWorld: null,       // world coords at last mousedown
+  downScreen: null,      // screen coords at mousedown (for selection rect)
   downTime: 0,
   downNodeId: null,      // node hit on mousedown
   dragOffset: { x: 0, y: 0 },
-  isDragging: false,     // dragging a node
-  isPanning: false,      // panning the canvas
+  isDragging: false,     // dragging node(s)
+  isPanning: false,      // spacebar + drag
+  isSelecting: false,    // marquee selection
   _panOffsetX: 0,
   _panOffsetY: 0,
   lastClickTime: 0,      // for synthetic double-click
   lastClickNodeId: null,
   mouseWorld: null,      // current mouse position in world coords
+  mouseScreen: null,     // current mouse position in screen coords
+  moved: false,          // whether mouse moved since mousedown (beyond threshold)
 };
 
-const DRAG_THRESHOLD = 4; // screen px before drag starts
+const DRAG_THRESHOLD = 4; // screen px before drag/pan/select starts
 
 // ─── DOM Refs ──────────────────────────────────────────────────────────
 
@@ -67,14 +72,23 @@ function mouseToWorld(e) {
   return screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
 }
 
+function mouseToScreen(e) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
 // ─── Drawing ───────────────────────────────────────────────────────────
 
 const GRID_SIZE = 40;
 const NODE_RADIUS = 14;
-const JUNCTION_RADIUS = 4; // 75% smaller than NODE_RADIUS
+const JUNCTION_RADIUS = 4;
 
 function nodeRadius(node) {
   return node.type === 'junction' ? JUNCTION_RADIUS : NODE_RADIUS;
+}
+
+function isSelected(node) {
+  return state.selectedNodeIds.has(node.id);
 }
 
 function drawGrid() {
@@ -134,7 +148,7 @@ function drawNodes() {
     const p = worldToScreen(node.x, node.y);
     const baseR = nodeRadius(node);
     const r = baseR * v.scale;
-    const isSelected = node.id === state.selectedNodeId;
+    const sel = isSelected(node);
     const isPending = node.id === state.pendingSourceId;
 
     // Glow for pending source
@@ -153,8 +167,8 @@ function drawNodes() {
     ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.fillStyle = fillColor;
     ctx.fill();
-    ctx.strokeStyle = isSelected || isPending ? '#0078ff' : '#333';
-    ctx.lineWidth = (isSelected || isPending) ? 3 : 1.5;
+    ctx.strokeStyle = sel || isPending ? '#0078ff' : '#333';
+    ctx.lineWidth = (sel || isPending) ? 3 : 1.5;
     ctx.stroke();
 
     // Label
@@ -205,6 +219,31 @@ function drawHoverDot() {
   ctx.stroke();
 }
 
+function drawSelectionRect() {
+  if (!ptr.isSelecting || !ptr.downScreen || !ptr.mouseScreen) return;
+
+  const x1 = ptr.downScreen.x;
+  const y1 = ptr.downScreen.y;
+  const x2 = ptr.mouseScreen.x;
+  const y2 = ptr.mouseScreen.y;
+
+  const left = Math.min(x1, x2);
+  const top = Math.min(y1, y2);
+  const w = Math.abs(x2 - x1);
+  const h = Math.abs(y2 - y1);
+
+  ctx.beginPath();
+  ctx.rect(left, top, w, h);
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = '#0078ff';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = 'rgba(0, 120, 255, 0.06)';
+  ctx.fillRect(left, top, w, h);
+}
+
 function draw() {
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -215,6 +254,32 @@ function draw() {
   drawNodes();
   drawPendingLine();
   drawHoverDot();
+  drawSelectionRect();
+}
+
+// ─── Cursor ────────────────────────────────────────────────────────────
+
+function updateCursor(e) {
+  if (state.spaceDown) {
+    canvas.style.cursor = ptr.isPanning ? 'grabbing' : 'grab';
+    return;
+  }
+
+  if (ptr.isDragging) {
+    canvas.style.cursor = 'move';
+    return;
+  }
+
+  if (e) {
+    const world = mouseToWorld(e);
+    const hit = hitNode(world.x, world.y);
+    if (hit && isSelected(hit)) {
+      canvas.style.cursor = 'move';
+      return;
+    }
+  }
+
+  canvas.style.cursor = 'crosshair';
 }
 
 // ─── Geometry Helpers ──────────────────────────────────────────────────
@@ -286,7 +351,7 @@ function uid() {
 function addNode(type, wx, wy) {
   const node = { id: uid(), type, x: wx, y: wy, label: '' };
   state.nodes.push(node);
-  state.selectedNodeId = node.id;
+  state.selectedNodeIds = new Set([node.id]);
   persist();
   draw();
   return node;
@@ -299,7 +364,7 @@ function deleteNode(id) {
   state.connections = state.connections.filter(
     c => c.sourceId !== id && c.targetId !== id
   );
-  if (state.selectedNodeId === id) state.selectedNodeId = null;
+  state.selectedNodeIds.delete(id);
   if (state.pendingSourceId === id) state.pendingSourceId = null;
   persist();
   draw();
@@ -331,9 +396,26 @@ function splitConnection(conn, wx, wy) {
   state.connections.push({ sourceId: conn.sourceId, targetId: junction.id });
   state.connections.push({ sourceId: junction.id, targetId: conn.targetId });
 
-  state.selectedNodeId = junction.id;
+  state.selectedNodeIds = new Set([junction.id]);
   persist();
   draw();
+}
+
+// ─── Compute marquee selection (world coords) ─────────────────────────
+
+function computeMarqueeSelection(w1, w2) {
+  const x1 = Math.min(w1.x, w2.x);
+  const y1 = Math.min(w1.y, w2.y);
+  const x2 = Math.max(w1.x, w2.x);
+  const y2 = Math.max(w1.y, w2.y);
+
+  const ids = new Set();
+  for (const node of state.nodes) {
+    if (node.x >= x1 && node.x <= x2 && node.y >= y1 && node.y <= y2) {
+      ids.add(node.id);
+    }
+  }
+  return ids;
 }
 
 // ─── Persistence ───────────────────────────────────────────────────────
@@ -359,6 +441,7 @@ async function load() {
     const data = await res.json();
     state.nodes = data.nodes || [];
     state.connections = data.connections || [];
+    state.selectedNodeIds = new Set();
   } catch (e) {
     console.error('Failed to load:', e);
   }
@@ -393,7 +476,26 @@ function hideMenu() {
 
 // --- Right-click ---
 canvas.addEventListener('contextmenu', (e) => {
-  showMenu(e); // showMenu calls preventDefault internally
+  showMenu(e);
+});
+
+// --- Keyboard: space down/up ---
+document.addEventListener('keydown', (e) => {
+  if (e.key === ' ' || e.code === 'Space') {
+    e.preventDefault();
+    if (!state.spaceDown) {
+      state.spaceDown = true;
+      updateCursor();
+    }
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.key === ' ' || e.code === 'Space') {
+    e.preventDefault();
+    state.spaceDown = false;
+    updateCursor();
+  }
 });
 
 // --- Mouse down ---
@@ -402,33 +504,53 @@ canvas.addEventListener('mousedown', (e) => {
   hideMenu();
 
   const world = mouseToWorld(e);
+  const screen = mouseToScreen(e);
   const hit = hitNode(world.x, world.y);
 
   ptr.downWorld = world;
+  ptr.downScreen = screen;
   ptr.downTime = Date.now();
   ptr.downNodeId = hit ? hit.id : null;
   ptr.isDragging = false;
   ptr.isPanning = false;
+  ptr.isSelecting = false;
+  ptr.moved = false;
+
+  if (hit) {
+    // If the clicked node isn't selected, clear selection and select just this one
+    if (!isSelected(hit)) {
+      state.selectedNodeIds = new Set([hit.id]);
+      draw();
+    }
+  }
 });
 
 // --- Mouse move ---
 canvas.addEventListener('mousemove', (e) => {
   const world = mouseToWorld(e);
+  const screen = mouseToScreen(e);
   ptr.mouseWorld = world;
+  ptr.mouseScreen = screen;
 
-  // --- Dragging a node ---
-  if (ptr.isDragging && ptr.downNodeId) {
-    const node = state.nodes.find(n => n.id === ptr.downNodeId);
-    if (node) {
-      node.x = world.x - ptr.dragOffset.x;
-      node.y = world.y - ptr.dragOffset.y;
-      state.hoverLine = null;
-      draw();
+  // --- Dragging selected node(s) ---
+  if (ptr.isDragging) {
+    const dx = world.x - ptr.downWorld.x;
+    const dy = world.y - ptr.downWorld.y;
+    for (const id of state.selectedNodeIds) {
+      const node = state.nodes.find(n => n.id === id);
+      if (node) {
+        node.x += dx;
+        node.y += dy;
+      }
     }
+    ptr.downWorld = { x: world.x, y: world.y };
+    state.hoverLine = null;
+    draw();
+    updateCursor(e);
     return;
   }
 
-  // --- Panning ---
+  // --- Panning (spacebar held) ---
   if (ptr.isPanning) {
     state.view.x = e.clientX - ptr._panOffsetX;
     state.view.y = e.clientY - ptr._panOffsetY;
@@ -437,34 +559,46 @@ canvas.addEventListener('mousemove', (e) => {
     return;
   }
 
-  // --- Check if we should start dragging or panning ---
+  // --- Check if we should start dragging, panning, or selecting ---
   if (ptr.downWorld) {
     const dx = (world.x - ptr.downWorld.x) * state.view.scale;
     const dy = (world.y - ptr.downWorld.y) * state.view.scale;
     const moved = Math.sqrt(dx * dx + dy * dy);
 
     if (moved > DRAG_THRESHOLD) {
-      if (ptr.downNodeId) {
-        ptr.isDragging = true;
-        // Compute offset from node center so the node doesn't jump
-        const node = state.nodes.find(n => n.id === ptr.downNodeId);
-        if (node) {
-          ptr.dragOffset = { x: world.x - node.x, y: world.y - node.y };
-        }
-      } else {
+      ptr.moved = true;
+
+      if (state.spaceDown) {
+        // Spacebar + drag → pan
         ptr.isPanning = true;
         ptr._panOffsetX = e.clientX - state.view.x;
         ptr._panOffsetY = e.clientY - state.view.y;
+        canvas.style.cursor = 'grabbing';
+        draw();
+        return;
       }
+
+      if (ptr.downNodeId) {
+        // Drag on a node → move all selected nodes
+        ptr.isDragging = true;
+        ptr.dragOffset = { x: world.x - ptr.downWorld.x, y: world.y - ptr.downWorld.y };
+        canvas.style.cursor = 'move';
+        draw();
+        return;
+      }
+
+      // Drag on empty space → marquee select
+      ptr.isSelecting = true;
       draw();
       return;
     }
   }
 
-  // --- Line hover (only when not dragging/panning) ---
+  // --- Line hover (only when not dragging/panning/selecting) ---
   const threshold = 15 / state.view.scale;
   state.hoverLine = findNearestLine(world.x, world.y, threshold);
   draw();
+  updateCursor(e);
 });
 
 // --- Mouse up ---
@@ -478,6 +612,7 @@ canvas.addEventListener('mouseup', (e) => {
     ptr.downWorld = null;
     persist();
     draw();
+    updateCursor(e);
     return;
   }
 
@@ -486,14 +621,25 @@ canvas.addEventListener('mouseup', (e) => {
     ptr.isPanning = false;
     ptr.downWorld = null;
     draw();
+    updateCursor(e);
     return;
   }
 
-  // --- It was a click (no drag) → process ---
+  // Stop selecting → compute marquee
+  if (ptr.isSelecting) {
+    ptr.isSelecting = false;
+    const w1 = screenToWorld(ptr.downScreen.x, ptr.downScreen.y);
+    const w2 = screenToWorld(ptr.mouseScreen.x, ptr.mouseScreen.y);
+    state.selectedNodeIds = computeMarqueeSelection(w1, w2);
+    ptr.downWorld = null;
+    draw();
+    updateCursor(e);
+    return;
+  }
 
   ptr.downWorld = null;
 
-  // Use the mouseup event position directly for accuracy
+  // --- It was a click (no drag) → process ---
   const clickWorld = mouseToWorld(e);
   const hit = hitNode(clickWorld.x, clickWorld.y);
   const now = Date.now();
@@ -505,7 +651,6 @@ canvas.addEventListener('mouseup', (e) => {
   ptr.lastClickNodeId = hit ? hit.id : null;
 
   if (isDblClick) {
-    // Double-click on a node → toggle selection / pending connection
     onDoubleClickNode(hit);
     return;
   }
@@ -516,7 +661,7 @@ canvas.addEventListener('mouseup', (e) => {
   const threshold = 15 / state.view.scale;
   const clickHover = state.hoverLine && findNearestLine(clickWorld.x, clickWorld.y, threshold);
 
-  // Click on a line hover → split line (before node hit test — hover dot is on the line)
+  // Click on a line hover → split line
   if (clickHover) {
     state.hoverLine = clickHover;
     splitConnection(state.hoverLine.conn, state.hoverLine.x, state.hoverLine.y);
@@ -524,12 +669,11 @@ canvas.addEventListener('mouseup', (e) => {
     return;
   }
 
-  // Click on empty space → cancel pending source
+  // Click on empty space → cancel pending source + clear selection
   if (!hit) {
-    if (state.pendingSourceId) {
-      state.pendingSourceId = null;
-      draw();
-    }
+    state.pendingSourceId = null;
+    state.selectedNodeIds = new Set();
+    draw();
     return;
   }
 
@@ -539,18 +683,20 @@ canvas.addEventListener('mouseup', (e) => {
     return;
   }
 
-  // Single click on a node with no pending source → do nothing (double-click needed for selection)
+  // Single click on a node with no pending source → select it (clear others)
+  state.selectedNodeIds = new Set([hit.id]);
+  draw();
 });
 
 function onDoubleClickNode(hit) {
   if (state.pendingSourceId === hit.id) {
     // Deselect
     state.pendingSourceId = null;
-    state.selectedNodeId = null;
+    state.selectedNodeIds = new Set();
   } else {
     // Select node and enter pending connection mode
     state.pendingSourceId = hit.id;
-    state.selectedNodeId = hit.id;
+    state.selectedNodeIds = new Set([hit.id]);
   }
   draw();
 }
@@ -605,13 +751,24 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     state.pendingSourceId = null;
-    state.selectedNodeId = null;
+    state.selectedNodeIds = new Set();
     state.hoverLine = null;
     hideMenu();
     draw();
   }
-  if ((e.key === 'Backspace' || e.key === 'Delete') && state.selectedNodeId) {
-    deleteNode(state.selectedNodeId);
+  if ((e.key === 'Backspace' || e.key === 'Delete') && state.selectedNodeIds.size > 0) {
+    // Delete all selected nodes
+    const ids = [...state.selectedNodeIds];
+    for (const id of ids) {
+      state.nodes = state.nodes.filter(n => n.id !== id);
+      state.connections = state.connections.filter(
+        c => c.sourceId !== id && c.targetId !== id
+      );
+      if (state.pendingSourceId === id) state.pendingSourceId = null;
+    }
+    state.selectedNodeIds = new Set();
+    persist();
+    draw();
   }
 });
 
