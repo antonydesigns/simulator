@@ -10,27 +10,73 @@ const state = {
   spaceDown: false,
 };
 
+// ─── Simulation ───────────────────────────────────────────────────────
+
+const sim = {
+  running: false,
+  interval: null,
+  tickHz: 10,
+};
+
+function simTick() {
+  const loads = state.nodes.filter(n => n.type === 'load');
+  const gens = state.nodes.filter(n => n.type === 'generator');
+  if (loads.length === 0 || gens.length === 0) return;
+
+  const totalDemand = loads.reduce((sum, l) => sum + (l.mw || 0), 0);
+  const targetPerGen = totalDemand / gens.length;
+  const dt = 1 / sim.tickHz;
+  let changed = false;
+
+  for (const gen of gens) {
+    const cur = gen.mw || 0;
+    const diff = targetPerGen - cur;
+    const maxDelta = (gen.rampRate || 5) * dt;
+    const delta = Math.max(-maxDelta, Math.min(maxDelta, diff));
+    if (Math.abs(delta) > 0.001) {
+      gen.mw = Math.max(0, cur + delta);
+      changed = true;
+    }
+  }
+
+  if (changed) draw();
+}
+
+function startSim() {
+  if (sim.running) return;
+  sim.running = true;
+  sim.interval = setInterval(simTick, 1000 / sim.tickHz);
+}
+
+function stopSim() {
+  sim.running = false;
+  if (sim.interval) {
+    clearInterval(sim.interval);
+    sim.interval = null;
+  }
+}
+
 // ─── Pointer state (not persisted) ────────────────────────────────────
 
 const ptr = {
-  downWorld: null,       // world coords at last mousedown
-  downScreen: null,      // screen coords at mousedown (for selection rect)
+  downWorld: null,
+  downScreen: null,
   downTime: 0,
-  downNodeId: null,      // node hit on mousedown
+  downNodeId: null,
   dragOffset: { x: 0, y: 0 },
-  isDragging: false,     // dragging node(s)
-  isPanning: false,      // spacebar + drag
-  isSelecting: false,    // marquee selection
+  isDragging: false,
+  isPanning: false,
+  isSelecting: false,
   _panOffsetX: 0,
   _panOffsetY: 0,
-  lastClickTime: 0,      // for synthetic double-click
+  lastClickTime: 0,
   lastClickNodeId: null,
-  mouseWorld: null,      // current mouse position in world coords
-  mouseScreen: null,     // current mouse position in screen coords
-  moved: false,          // whether mouse moved since mousedown (beyond threshold)
+  mouseWorld: null,
+  mouseScreen: null,
+  moved: false,
 };
 
-const DRAG_THRESHOLD = 4; // screen px before drag/pan/select starts
+const DRAG_THRESHOLD = 4;
 
 // ─── DOM Refs ──────────────────────────────────────────────────────────
 
@@ -39,7 +85,7 @@ const ctx = canvas.getContext('2d');
 const menu = document.getElementById('context-menu');
 const menuItems = document.getElementById('context-menu-items');
 
-const openPanels = {}; // nodeId -> { panel, slider, valueEl }
+const openPanels = {}; // nodeId -> { panel }
 
 let dragPanel = null;
 let dragOff = { x: 0, y: 0 };
@@ -103,48 +149,35 @@ function drawGrid() {
   const v = state.view;
   const w = window.innerWidth;
   const h = window.innerHeight;
-
   const topLeft = screenToWorld(0, 0);
   const bottomRight = screenToWorld(w, h);
-
   const startX = Math.floor(topLeft.x / GRID_SIZE) * GRID_SIZE;
   const startY = Math.floor(topLeft.y / GRID_SIZE) * GRID_SIZE;
-  const endX = bottomRight.x;
-  const endY = bottomRight.y;
 
   ctx.strokeStyle = '#ddd8ce';
   ctx.lineWidth = 1;
 
-  for (let wx = startX; wx <= endX; wx += GRID_SIZE) {
+  for (let wx = startX; wx <= bottomRight.x; wx += GRID_SIZE) {
     const sx = wx * v.scale + v.x;
-    ctx.beginPath();
-    ctx.moveTo(sx, 0);
-    ctx.lineTo(sx, h);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, h); ctx.stroke();
   }
-  for (let wy = startY; wy <= endY; wy += GRID_SIZE) {
+  for (let wy = startY; wy <= bottomRight.y; wy += GRID_SIZE) {
     const sy = wy * v.scale + v.y;
-    ctx.beginPath();
-    ctx.moveTo(0, sy);
-    ctx.lineTo(w, sy);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(w, sy); ctx.stroke();
   }
 }
 
 function drawConnections() {
   for (const conn of state.connections) {
-    const source = state.nodes.find(n => n.id === conn.sourceId);
-    const target = state.nodes.find(n => n.id === conn.targetId);
-    if (!source || !target) continue;
-
-    const s = worldToScreen(source.x, source.y);
-    const t = worldToScreen(target.x, target.y);
-
+    const src = state.nodes.find(n => n.id === conn.sourceId);
+    const tgt = state.nodes.find(n => n.id === conn.targetId);
+    if (!src || !tgt) continue;
+    const s = worldToScreen(src.x, src.y);
+    const t = worldToScreen(tgt.x, tgt.y);
     ctx.beginPath();
     ctx.strokeStyle = '#7a766e';
     ctx.lineWidth = 2;
-    ctx.moveTo(s.x, s.y);
-    ctx.lineTo(t.x, t.y);
+    ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y);
     ctx.stroke();
   }
 }
@@ -159,7 +192,6 @@ function drawNodes() {
     const sel = isSelected(node);
     const isPending = node.id === state.pendingSourceId;
 
-    // Glow for pending source
     if (isPending) {
       ctx.beginPath();
       ctx.arc(p.x, p.y, r + 8, 0, Math.PI * 2);
@@ -167,7 +199,6 @@ function drawNodes() {
       ctx.fill();
     }
 
-    // Node circle
     const fillColor = node.type === 'generator' ? '#6aaa64'
                     : node.type === 'junction' ? '#b0aca2'
                     : '#ca9440';
@@ -179,7 +210,6 @@ function drawNodes() {
     ctx.lineWidth = (sel || isPending) ? 3 : 1.5;
     ctx.stroke();
 
-    // Label
     const labelSize = Math.max(10, 11 * v.scale);
     ctx.fillStyle = '#6a665e';
     ctx.font = `${labelSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
@@ -199,25 +229,22 @@ function drawNodes() {
       ctx.fillStyle = '#8a867e';
       ctx.font = `${mwSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
       ctx.textBaseline = 'top';
-      ctx.fillText(node.mw + 'MW', p.x, p.y + r + 4 + labelSize + 2);
+      ctx.fillText(Math.round(node.mw) + 'MW', p.x, p.y + r + 4 + labelSize + 2);
     }
   }
 }
 
 function drawPendingLine() {
   if (!state.pendingSourceId || !ptr.mouseWorld) return;
-  const source = state.nodes.find(n => n.id === state.pendingSourceId);
-  if (!source) return;
-
-  const s = worldToScreen(source.x, source.y);
+  const src = state.nodes.find(n => n.id === state.pendingSourceId);
+  if (!src) return;
+  const s = worldToScreen(src.x, src.y);
   const m = worldToScreen(ptr.mouseWorld.x, ptr.mouseWorld.y);
-
   ctx.beginPath();
   ctx.setLineDash([6, 4]);
   ctx.strokeStyle = '#7a9ec0';
   ctx.lineWidth = 2;
-  ctx.moveTo(s.x, s.y);
-  ctx.lineTo(m.x, m.y);
+  ctx.moveTo(s.x, s.y); ctx.lineTo(m.x, m.y);
   ctx.stroke();
   ctx.setLineDash([]);
 }
@@ -226,7 +253,6 @@ function drawHoverDot() {
   if (!state.hoverLine) return;
   const p = worldToScreen(state.hoverLine.x, state.hoverLine.y);
   const r = JUNCTION_RADIUS * state.view.scale;
-
   ctx.beginPath();
   ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(160, 156, 148, 0.4)';
@@ -238,34 +264,25 @@ function drawHoverDot() {
 
 function drawSelectionRect() {
   if (!ptr.isSelecting || !ptr.downScreen || !ptr.mouseScreen) return;
-
-  const x1 = ptr.downScreen.x;
-  const y1 = ptr.downScreen.y;
-  const x2 = ptr.mouseScreen.x;
-  const y2 = ptr.mouseScreen.y;
-
-  const left = Math.min(x1, x2);
-  const top = Math.min(y1, y2);
-  const w = Math.abs(x2 - x1);
-  const h = Math.abs(y2 - y1);
-
+  const x1 = ptr.downScreen.x, y1 = ptr.downScreen.y;
+  const x2 = ptr.mouseScreen.x, y2 = ptr.mouseScreen.y;
+  const l = Math.min(x1, x2), t = Math.min(y1, y2);
+  const w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
   ctx.beginPath();
-  ctx.rect(left, top, w, h);
+  ctx.rect(l, t, w, h);
   ctx.setLineDash([6, 4]);
   ctx.strokeStyle = '#7a9ec0';
   ctx.lineWidth = 1.5;
   ctx.stroke();
   ctx.setLineDash([]);
-
   ctx.fillStyle = 'rgba(122, 158, 192, 0.06)';
-  ctx.fillRect(left, top, w, h);
+  ctx.fillRect(l, t, w, h);
 }
 
 function draw() {
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-
   drawGrid();
   drawConnections();
   drawNodes();
@@ -281,92 +298,75 @@ function updateCursor(e) {
     canvas.style.cursor = ptr.isPanning ? 'grabbing' : 'grab';
     return;
   }
-
-  if (ptr.isDragging) {
-    canvas.style.cursor = 'move';
-    return;
-  }
-
+  if (ptr.isDragging) { canvas.style.cursor = 'move'; return; }
   if (e) {
     const world = mouseToWorld(e);
     const hit = hitNode(world.x, world.y);
-    if (hit && isSelected(hit)) {
-      canvas.style.cursor = 'move';
-      return;
-    }
+    if (hit && isSelected(hit)) { canvas.style.cursor = 'move'; return; }
   }
-
   canvas.style.cursor = 'crosshair';
 }
 
-// ─── Geometry Helpers ──────────────────────────────────────────────────
+// ─── Geometry ──────────────────────────────────────────────────────────
 
 function pointToSegmentDist(px, py, ax, ay, bx, by) {
-  const dx = bx - ax;
-  const dy = by - ay;
+  const dx = bx - ax, dy = by - ay;
   const lenSq = dx * dx + dy * dy;
   if (lenSq === 0) {
     const ex = px - ax, ey = py - ay;
-    return { dist: Math.sqrt(ex * ex + ey * ey), cx: ax, cy: ay };
+    return { dist: Math.sqrt(ex*ex + ey*ey), cx: ax, cy: ay };
   }
   let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
   t = Math.max(0, Math.min(1, t));
-  const cx = ax + t * dx;
-  const cy = ay + t * dy;
+  const cx = ax + t * dx, cy = ay + t * dy;
   const ex = px - cx, ey = py - cy;
-  return { dist: Math.sqrt(ex * ex + ey * ey), cx, cy };
+  return { dist: Math.sqrt(ex*ex + ey*ey), cx, cy };
 }
 
 function findNearestLine(wx, wy, threshold) {
-  let best = null;
-  let bestDist = threshold;
-
+  let best = null, bestDist = threshold;
   for (const conn of state.connections) {
     const src = state.nodes.find(n => n.id === conn.sourceId);
     const tgt = state.nodes.find(n => n.id === conn.targetId);
     if (!src || !tgt) continue;
-
-    const result = pointToSegmentDist(wx, wy, src.x, src.y, tgt.x, tgt.y);
-    if (result.dist < bestDist) {
-      const distToSrc = Math.sqrt((result.cx - src.x) ** 2 + (result.cy - src.y) ** 2);
-      const distToTgt = Math.sqrt((result.cx - tgt.x) ** 2 + (result.cy - tgt.y) ** 2);
-      const srcMargin = nodeRadius(src) + 4;
-      const tgtMargin = nodeRadius(tgt) + 4;
-      if (distToSrc > srcMargin && distToTgt > tgtMargin) {
-        bestDist = result.dist;
-        best = { x: result.cx, y: result.cy, conn };
+    const r = pointToSegmentDist(wx, wy, src.x, src.y, tgt.x, tgt.y);
+    if (r.dist < bestDist) {
+      const dS = Math.sqrt((r.cx - src.x)**2 + (r.cy - src.y)**2);
+      const dT = Math.sqrt((r.cx - tgt.x)**2 + (r.cy - tgt.y)**2);
+      if (dS > nodeRadius(src) + 4 && dT > nodeRadius(tgt) + 4) {
+        bestDist = r.dist;
+        best = { x: r.cx, y: r.cy, conn };
       }
     }
   }
   return best;
 }
 
-// ─── Node Hit Testing ──────────────────────────────────────────────────
-
 function hitNode(wx, wy) {
   for (let i = state.nodes.length - 1; i >= 0; i--) {
     const n = state.nodes[i];
-    const dx = wx - n.x;
-    const dy = wy - n.y;
     const r = nodeRadius(n) + 4;
-    if (dx * dx + dy * dy <= r * r) {
-      return n;
-    }
+    if ((wx - n.x)**2 + (wy - n.y)**2 <= r * r) return n;
   }
   return null;
 }
 
-// ─── ID Generation ─────────────────────────────────────────────────────
+// ─── ID ────────────────────────────────────────────────────────────────
 
 let idCounter = Date.now();
-function uid() {
-  return 'n' + (idCounter++).toString(36);
-}
+function uid() { return 'n' + (idCounter++).toString(36); }
 
 // ─── Add Node ──────────────────────────────────────────────────────────
 
 function addNode(type, wx, wy) {
-  const node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0 };
+  let node;
+  if (type === 'load') {
+    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 10 };
+  } else if (type === 'generator') {
+    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5 };
+  } else {
+    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0 };
+  }
   state.nodes.push(node);
   state.selectedNodeIds = new Set([node.id]);
   persist();
@@ -378,12 +378,10 @@ function addNode(type, wx, wy) {
 
 function deleteNode(id) {
   state.nodes = state.nodes.filter(n => n.id !== id);
-  state.connections = state.connections.filter(
-    c => c.sourceId !== id && c.targetId !== id
-  );
+  state.connections = state.connections.filter(c => c.sourceId !== id && c.targetId !== id);
   state.selectedNodeIds.delete(id);
   if (state.pendingSourceId === id) state.pendingSourceId = null;
-  closeSettings(id); // close any open settings panel for this node
+  closeSettings(id);
   persist();
   draw();
 }
@@ -397,41 +395,33 @@ function addConnection(sourceId, targetId) {
          (c.sourceId === targetId && c.targetId === sourceId)
   );
   if (exists) return;
-
   state.connections.push({ sourceId, targetId });
   state.pendingSourceId = null;
   persist();
   draw();
 }
 
-// ─── Split a Connection at a Point (create junction) ───────────────────
+// ─── Split Connection ──────────────────────────────────────────────────
 
 function splitConnection(conn, wx, wy) {
-  const junction = { id: uid(), type: 'junction', x: wx, y: wy, label: '' };
-  state.nodes.push(junction);
-
+  const j = { id: uid(), type: 'junction', x: wx, y: wy, label: '', mw: 0 };
+  state.nodes.push(j);
   state.connections = state.connections.filter(c => c !== conn);
-  state.connections.push({ sourceId: conn.sourceId, targetId: junction.id });
-  state.connections.push({ sourceId: junction.id, targetId: conn.targetId });
-
-  state.selectedNodeIds = new Set([junction.id]);
+  state.connections.push({ sourceId: conn.sourceId, targetId: j.id });
+  state.connections.push({ sourceId: j.id, targetId: conn.targetId });
+  state.selectedNodeIds = new Set([j.id]);
   persist();
   draw();
 }
 
-// ─── Compute marquee selection (world coords) ─────────────────────────
+// ─── Marquee ───────────────────────────────────────────────────────────
 
 function computeMarqueeSelection(w1, w2) {
-  const x1 = Math.min(w1.x, w2.x);
-  const y1 = Math.min(w1.y, w2.y);
-  const x2 = Math.max(w1.x, w2.x);
-  const y2 = Math.max(w1.y, w2.y);
-
+  const x1 = Math.min(w1.x, w2.x), y1 = Math.min(w1.y, w2.y);
+  const x2 = Math.max(w1.x, w2.x), y2 = Math.max(w1.y, w2.y);
   const ids = new Set();
-  for (const node of state.nodes) {
-    if (node.x >= x1 && node.x <= x2 && node.y >= y1 && node.y <= y2) {
-      ids.add(node.id);
-    }
+  for (const n of state.nodes) {
+    if (n.x >= x1 && n.x <= x2 && n.y >= y1 && n.y <= y2) ids.add(n.id);
   }
   return ids;
 }
@@ -443,14 +433,9 @@ async function persist() {
     await fetch('/api/grid', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        nodes: state.nodes,
-        connections: state.connections,
-      }),
+      body: JSON.stringify({ nodes: state.nodes, connections: state.connections }),
     });
-  } catch (e) {
-    console.error('Failed to persist:', e);
-  }
+  } catch (e) { console.error('Persist failed:', e); }
 }
 
 async function load() {
@@ -460,9 +445,13 @@ async function load() {
     state.nodes = data.nodes || [];
     state.connections = data.connections || [];
     state.selectedNodeIds = new Set();
-  } catch (e) {
-    console.error('Failed to load:', e);
-  }
+    // Migrate
+    for (const n of state.nodes) {
+      if (n.mw === undefined) n.mw = 0;
+      if (n.type === 'load' && n.mw === 0) n.mw = 10;
+      if (n.type === 'generator' && n.rampRate === undefined) n.rampRate = 5;
+    }
+  } catch (e) { console.error('Load failed:', e); }
 }
 
 // ─── Context Menu ──────────────────────────────────────────────────────
@@ -470,76 +459,59 @@ async function load() {
 function showMenu(e, nodeHit) {
   e.preventDefault();
   const world = mouseToWorld(e);
-
   menu.dataset.wx = world.x;
   menu.dataset.wy = world.y;
   menu.dataset.nodeId = nodeHit ? nodeHit.id : '';
-
-  // Build menu items dynamically
   menuItems.innerHTML = '';
 
   if (nodeHit && nodeHit.type !== 'junction') {
-    // Node-specific menu
     addMenuItem('Open settings', 'open-settings');
     addMenuSeparator();
     addMenuItem('Delete', 'delete-node');
-  } else if (nodeHit && nodeHit.type === 'junction') {
+  } else if (nodeHit) {
     addMenuItem('Delete', 'delete-node');
   } else {
-    // Empty space menu
     addMenuItem('+ Generator', 'add-generator');
     addMenuItem('+ Load', 'add-load');
     addMenuSeparator();
     addMenuItem('+ Junction', 'add-junction');
   }
 
-  const menuW = 160;
-  const menuH = menuItems.children.length * 36 + 8;
-  let mx = e.clientX;
-  let my = e.clientY;
-  if (mx + menuW > window.innerWidth) mx = window.innerWidth - menuW - 8;
-  if (my + menuH > window.innerHeight) my = window.innerHeight - menuH - 8;
-
+  const h = menuItems.children.length * 36 + 8;
+  let mx = e.clientX, my = e.clientY;
+  if (mx + 160 > window.innerWidth) mx = window.innerWidth - 168;
+  if (my + h > window.innerHeight) my = window.innerHeight - h - 8;
   menu.style.left = mx + 'px';
   menu.style.top = my + 'px';
   menu.classList.remove('hidden');
 }
 
 function addMenuItem(text, action) {
-  const div = document.createElement('div');
-  div.className = 'context-menu-item';
-  div.dataset.action = action;
-  div.textContent = text;
-  menuItems.appendChild(div);
+  const d = document.createElement('div');
+  d.className = 'context-menu-item';
+  d.dataset.action = action;
+  d.textContent = text;
+  menuItems.appendChild(d);
 }
 
 function addMenuSeparator() {
-  const div = document.createElement('div');
-  div.className = 'context-menu-separator';
-  menuItems.appendChild(div);
+  const d = document.createElement('div');
+  d.className = 'context-menu-separator';
+  menuItems.appendChild(d);
 }
 
-function hideMenu() {
-  menu.classList.add('hidden');
-}
+function hideMenu() { menu.classList.add('hidden'); }
 
-// ─── Event Handlers ────────────────────────────────────────────────────
+// ─── Events ────────────────────────────────────────────────────────────
 
-// --- Right-click ---
 canvas.addEventListener('contextmenu', (e) => {
-  const world = mouseToWorld(e);
-  const hit = hitNode(world.x, world.y);
-  showMenu(e, hit);
+  showMenu(e, hitNode(mouseToWorld(e).x, mouseToWorld(e).y));
 });
 
-// --- Keyboard: space down/up ---
 document.addEventListener('keydown', (e) => {
   if (e.key === ' ' || e.code === 'Space') {
     e.preventDefault();
-    if (!state.spaceDown) {
-      state.spaceDown = true;
-      updateCursor();
-    }
+    if (!state.spaceDown) { state.spaceDown = true; updateCursor(); }
   }
 });
 
@@ -551,15 +523,12 @@ document.addEventListener('keyup', (e) => {
   }
 });
 
-// --- Mouse down ---
 canvas.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   hideMenu();
-
   const world = mouseToWorld(e);
   const screen = mouseToScreen(e);
   const hit = hitNode(world.x, world.y);
-
   ptr.downWorld = world;
   ptr.downScreen = screen;
   ptr.downTime = Date.now();
@@ -568,33 +537,23 @@ canvas.addEventListener('mousedown', (e) => {
   ptr.isPanning = false;
   ptr.isSelecting = false;
   ptr.moved = false;
-
-  if (hit) {
-    // If the clicked node isn't selected, clear selection and select just this one
-    if (!isSelected(hit)) {
-      state.selectedNodeIds = new Set([hit.id]);
-      draw();
-    }
+  if (hit && !isSelected(hit)) {
+    state.selectedNodeIds = new Set([hit.id]);
+    draw();
   }
 });
 
-// --- Mouse move ---
 canvas.addEventListener('mousemove', (e) => {
   const world = mouseToWorld(e);
   const screen = mouseToScreen(e);
   ptr.mouseWorld = world;
   ptr.mouseScreen = screen;
 
-  // --- Dragging selected node(s) ---
   if (ptr.isDragging) {
-    const dx = world.x - ptr.downWorld.x;
-    const dy = world.y - ptr.downWorld.y;
+    const dx = world.x - ptr.downWorld.x, dy = world.y - ptr.downWorld.y;
     for (const id of state.selectedNodeIds) {
-      const node = state.nodes.find(n => n.id === id);
-      if (node) {
-        node.x += dx;
-        node.y += dy;
-      }
+      const n = state.nodes.find(n => n.id === id);
+      if (n) { n.x += dx; n.y += dy; }
     }
     ptr.downWorld = { x: world.x, y: world.y };
     state.hoverLine = null;
@@ -603,7 +562,6 @@ canvas.addEventListener('mousemove', (e) => {
     return;
   }
 
-  // --- Panning (spacebar held) ---
   if (ptr.isPanning) {
     state.view.x = e.clientX - ptr._panOffsetX;
     state.view.y = e.clientY - ptr._panOffsetY;
@@ -612,357 +570,243 @@ canvas.addEventListener('mousemove', (e) => {
     return;
   }
 
-  // --- Check if we should start dragging, panning, or selecting ---
   if (ptr.downWorld) {
     const dx = (world.x - ptr.downWorld.x) * state.view.scale;
     const dy = (world.y - ptr.downWorld.y) * state.view.scale;
-    const moved = Math.sqrt(dx * dx + dy * dy);
-
-    if (moved > DRAG_THRESHOLD) {
+    if (Math.sqrt(dx*dx + dy*dy) > DRAG_THRESHOLD) {
       ptr.moved = true;
-
       if (state.spaceDown) {
-        // Spacebar + drag → pan
         ptr.isPanning = true;
         ptr._panOffsetX = e.clientX - state.view.x;
         ptr._panOffsetY = e.clientY - state.view.y;
         canvas.style.cursor = 'grabbing';
-        draw();
-        return;
+        draw(); return;
       }
-
       if (ptr.downNodeId) {
-        // Drag on a node → move all selected nodes
         ptr.isDragging = true;
-        ptr.dragOffset = { x: world.x - ptr.downWorld.x, y: world.y - ptr.downWorld.y };
         canvas.style.cursor = 'move';
-        draw();
-        return;
+        draw(); return;
       }
-
-      // Drag on empty space → marquee select
       ptr.isSelecting = true;
-      draw();
-      return;
+      draw(); return;
     }
   }
 
-  // --- Line hover (only when not dragging/panning/selecting) ---
-  const threshold = 15 / state.view.scale;
-  state.hoverLine = findNearestLine(world.x, world.y, threshold);
+  state.hoverLine = findNearestLine(world.x, world.y, 15 / state.view.scale);
   draw();
   updateCursor(e);
 });
 
-// --- Mouse up ---
 canvas.addEventListener('mouseup', (e) => {
   if (e.button !== 0) return;
 
-  // Stop dragging → persist
   if (ptr.isDragging) {
-    ptr.isDragging = false;
-    ptr.downNodeId = null;
-    ptr.downWorld = null;
-    persist();
-    draw();
-    updateCursor(e);
-    return;
+    ptr.isDragging = false; ptr.downNodeId = null; ptr.downWorld = null;
+    persist(); draw(); updateCursor(e); return;
   }
-
-  // Stop panning
   if (ptr.isPanning) {
-    ptr.isPanning = false;
-    ptr.downWorld = null;
-    draw();
-    updateCursor(e);
-    return;
+    ptr.isPanning = false; ptr.downWorld = null;
+    draw(); updateCursor(e); return;
   }
-
-  // Stop selecting → compute marquee
   if (ptr.isSelecting) {
     ptr.isSelecting = false;
     const w1 = screenToWorld(ptr.downScreen.x, ptr.downScreen.y);
     const w2 = screenToWorld(ptr.mouseScreen.x, ptr.mouseScreen.y);
     state.selectedNodeIds = computeMarqueeSelection(w1, w2);
     ptr.downWorld = null;
-    draw();
-    updateCursor(e);
-    return;
+    draw(); updateCursor(e); return;
   }
 
   ptr.downWorld = null;
-
-  // --- It was a click (no drag) → process ---
-  const clickWorld = mouseToWorld(e);
-  const hit = hitNode(clickWorld.x, clickWorld.y);
+  const cw = mouseToWorld(e);
+  const hit = hitNode(cw.x, cw.y);
   const now = Date.now();
-
-  // --- Double-click detection (synthetic) ---
-  const isDblClick = hit && hit.id === ptr.lastClickNodeId && (now - ptr.lastClickTime) < 400;
-
+  const dbl = hit && hit.id === ptr.lastClickNodeId && (now - ptr.lastClickTime) < 400;
   ptr.lastClickTime = now;
   ptr.lastClickNodeId = hit ? hit.id : null;
+  if (dbl) { onDoubleClickNode(hit); return; }
 
-  if (isDblClick) {
-    onDoubleClickNode(hit);
-    return;
-  }
-
-  // --- Single click ---
-
-  // Re-check line hover at click position
-  const threshold = 15 / state.view.scale;
-  const clickHover = state.hoverLine && findNearestLine(clickWorld.x, clickWorld.y, threshold);
-
-  // Click on a line hover → split line
-  if (clickHover) {
-    state.hoverLine = clickHover;
-    splitConnection(state.hoverLine.conn, state.hoverLine.x, state.hoverLine.y);
-    state.hoverLine = null;
-    return;
-  }
-
-  // Click on empty space → cancel pending source + clear selection
-  if (!hit) {
-    state.pendingSourceId = null;
-    state.selectedNodeIds = new Set();
-    draw();
-    return;
-  }
-
-  // Click on a node while a pending source exists → connect
-  if (state.pendingSourceId) {
-    addConnection(state.pendingSourceId, hit.id);
-    return;
-  }
-
-  // Single click on a node with no pending source → select it (clear others)
+  const hover = state.hoverLine && findNearestLine(cw.x, cw.y, 15 / state.view.scale);
+  if (hover) { state.hoverLine = hover; splitConnection(hover.conn, hover.x, hover.y); state.hoverLine = null; return; }
+  if (!hit) { state.pendingSourceId = null; state.selectedNodeIds = new Set(); draw(); return; }
+  if (state.pendingSourceId) { addConnection(state.pendingSourceId, hit.id); return; }
   state.selectedNodeIds = new Set([hit.id]);
   draw();
 });
 
 function onDoubleClickNode(hit) {
   if (state.pendingSourceId === hit.id) {
-    // Deselect
-    state.pendingSourceId = null;
-    state.selectedNodeIds = new Set();
+    state.pendingSourceId = null; state.selectedNodeIds = new Set();
   } else {
-    // Select node and enter pending connection mode
-    state.pendingSourceId = hit.id;
-    state.selectedNodeIds = new Set([hit.id]);
+    state.pendingSourceId = hit.id; state.selectedNodeIds = new Set([hit.id]);
   }
   draw();
 }
 
-// --- Wheel (zoom) ---
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
-
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-
-  const world = screenToWorld(mx, my);
-
-  const zoomFactor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
-  const newScale = Math.max(0.1, Math.min(10, state.view.scale * zoomFactor));
-
-  state.view.x = mx - world.x * newScale;
-  state.view.y = my - world.y * newScale;
-  state.view.scale = newScale;
-
+  const r = canvas.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const w = screenToWorld(mx, my);
+  const f = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+  const ns = Math.max(0.1, Math.min(10, state.view.scale * f));
+  state.view.x = mx - w.x * ns; state.view.y = my - w.y * ns;
+  state.view.scale = ns;
   draw();
 }, { passive: false });
 
-// --- Menu actions (delegated) ---
 menu.addEventListener('click', (e) => {
   const item = e.target.closest('.context-menu-item');
   if (!item) return;
-
-  const action = item.dataset.action;
-  const wx = parseFloat(menu.dataset.wx);
-  const wy = parseFloat(menu.dataset.wy);
-  const nodeId = menu.dataset.nodeId;
-
-  if (action === 'add-generator') {
-    addNode('generator', wx, wy);
-  } else if (action === 'add-load') {
-    addNode('load', wx, wy);
-  } else if (action === 'add-junction') {
-    addNode('junction', wx, wy);
-  } else if (action === 'open-settings') {
-    openSettings(nodeId);
-  } else if (action === 'delete-node') {
-    if (nodeId) deleteNode(nodeId);
-  }
-
+  const a = item.dataset.action, wx = parseFloat(menu.dataset.wx), wy = parseFloat(menu.dataset.wy), id = menu.dataset.nodeId;
+  if (a === 'add-generator') addNode('generator', wx, wy);
+  else if (a === 'add-load') addNode('load', wx, wy);
+  else if (a === 'add-junction') addNode('junction', wx, wy);
+  else if (a === 'open-settings') openSettings(id);
+  else if (a === 'delete-node' && id) deleteNode(id);
   hideMenu();
 });
 
-// Hide menu on any click outside
-document.addEventListener('click', (e) => {
-  if (!menu.contains(e.target)) {
-    hideMenu();
-  }
-});
+document.addEventListener('click', (e) => { if (!menu.contains(e.target)) hideMenu(); });
 
-// --- Keyboard shortcuts ---
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    state.pendingSourceId = null;
-    state.selectedNodeIds = new Set();
-    state.hoverLine = null;
-    hideMenu();
-    draw();
+    state.pendingSourceId = null; state.selectedNodeIds = new Set(); state.hoverLine = null;
+    hideMenu(); draw();
   }
   if ((e.key === 'Backspace' || e.key === 'Delete') && state.selectedNodeIds.size > 0) {
-    // Delete all selected nodes
-    const ids = [...state.selectedNodeIds];
-    for (const id of ids) {
+    for (const id of [...state.selectedNodeIds]) {
       state.nodes = state.nodes.filter(n => n.id !== id);
-      state.connections = state.connections.filter(
-        c => c.sourceId !== id && c.targetId !== id
-      );
+      state.connections = state.connections.filter(c => c.sourceId !== id && c.targetId !== id);
       if (state.pendingSourceId === id) state.pendingSourceId = null;
       closeSettings(id);
     }
     state.selectedNodeIds = new Set();
-    persist();
-    draw();
+    persist(); draw();
   }
 });
 
-// ─── Settings Panels (multiple, one per node) ───────────────────────────
+// ─── Settings Panels ───────────────────────────────────────────────────
 
 function openSettings(nodeId) {
   const node = state.nodes.find(n => n.id === nodeId);
   if (!node || node.type === 'junction') return;
-
-  // Already open — bring to front
-  if (openPanels[nodeId]) {
-    openPanels[nodeId].panel.style.zIndex = Date.now();
-    return;
-  }
+  if (openPanels[nodeId]) { openPanels[nodeId].panel.style.zIndex = Date.now(); return; }
 
   const panel = document.createElement('div');
   panel.className = 'settings-panel';
   panel.dataset.nodeId = nodeId;
   panel.style.zIndex = Date.now();
+  const tag = node.label || node.id.slice(-4);
 
-  const label = node.type === 'generator' ? 'Generator' : 'Load';
-  const idLabel = node.label || node.id.slice(-4);
-
-  panel.innerHTML = `
-    <div class="settings-header">
-      <span class="settings-title">${label} ${idLabel}</span>
-      <span class="settings-close" data-action="close-settings">&times;</span>
-    </div>
-    <div class="settings-body">
-      <div class="settings-row">
-        <label class="settings-label">MW</label>
-        <div class="settings-slider-group">
-          <input type="range" class="mw-slider" min="0" max="1000" step="10" value="${node.mw || 0}">
-          <span class="mw-value">${node.mw || 0}</span>
+  if (node.type === 'generator') {
+    panel.innerHTML = `
+      <div class="settings-header">
+        <span class="settings-title">Generator ${tag}</span>
+        <span class="settings-close" data-action="close-settings">&times;</span>
+      </div>
+      <div class="settings-body">
+        <div class="settings-row">
+          <label class="settings-label">Current Output</label>
+          <div class="settings-value-display" id="gen-output-${nodeId}">${Math.round(node.mw || 0)} MW</div>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label">Ramp Rate (MW/s)</label>
+          <div class="settings-slider-group">
+            <input type="range" class="ramp-slider" min="1" max="50" step="1" value="${node.rampRate || 5}">
+            <span class="ramp-value">${node.rampRate || 5}</span>
+          </div>
         </div>
       </div>
-    </div>
-    <div class="settings-resize-handle"></div>
-  `;
+      <div class="settings-resize-handle"></div>`;
 
-  // Cascade position so multiple panels don't overlap exactly
+    const rampSlider = panel.querySelector('.ramp-slider');
+    const rampVal = panel.querySelector('.ramp-value');
+    rampSlider.addEventListener('input', () => {
+      const v = parseInt(rampSlider.value, 10);
+      rampVal.textContent = v;
+      node.rampRate = v;
+    });
+    rampSlider.addEventListener('change', () => persist());
+
+  } else {
+    panel.innerHTML = `
+      <div class="settings-header">
+        <span class="settings-title">Load ${tag}</span>
+        <span class="settings-close" data-action="close-settings">&times;</span>
+      </div>
+      <div class="settings-body">
+        <div class="settings-row">
+          <label class="settings-label">Demand (MW)</label>
+          <div class="settings-slider-group">
+            <input type="range" class="mw-slider" min="0" max="1000" step="10" value="${node.mw || 10}">
+            <span class="mw-value">${node.mw || 10}</span>
+          </div>
+        </div>
+      </div>
+      <div class="settings-resize-handle"></div>`;
+
+    const slider = panel.querySelector('.mw-slider');
+    const valEl = panel.querySelector('.mw-value');
+    slider.addEventListener('input', () => {
+      const v = parseInt(slider.value, 10);
+      valEl.textContent = v;
+      node.mw = v;
+      draw();
+    });
+    slider.addEventListener('change', () => persist());
+  }
+
   const count = Object.keys(openPanels).length;
   panel.style.left = (120 + count * 28) + 'px';
   panel.style.top = (80 + count * 28) + 'px';
-
   document.body.appendChild(panel);
 
-  const slider = panel.querySelector('.mw-slider');
-  const valueEl = panel.querySelector('.mw-value');
-
-  // Slider → update node MW in real-time
-  slider.addEventListener('input', () => {
-    const val = parseInt(slider.value, 10);
-    valueEl.textContent = val;
-    node.mw = val;
-    draw();
-  });
-  slider.addEventListener('change', () => persist());
-
-  // Close button
   panel.querySelector('[data-action="close-settings"]').addEventListener('click', (e) => {
     e.stopPropagation();
     closeSettings(nodeId);
   });
 
-  // Drag from header
   panel.addEventListener('mousedown', (e) => {
-    const header = e.target.closest('.settings-header');
-    if (!header) return;
-    dragPanel = panel;
-    dragOff = { x: e.clientX - panel.offsetLeft, y: e.clientY - panel.offsetTop };
-    panel.style.zIndex = Date.now();
-    e.preventDefault();
+    if (e.target.closest('.settings-header')) {
+      dragPanel = panel;
+      dragOff = { x: e.clientX - panel.offsetLeft, y: e.clientY - panel.offsetTop };
+      panel.style.zIndex = Date.now();
+      e.preventDefault();
+    }
+    if (e.target.closest('.settings-resize-handle')) {
+      resizePanel = panel;
+      resizeStart = { x: e.clientX, y: e.clientY, w: panel.offsetWidth, h: panel.offsetHeight };
+      panel.style.zIndex = Date.now();
+      e.preventDefault();
+    }
   });
 
-  // Resize from corner handle
-  panel.addEventListener('mousedown', (e) => {
-    const handle = e.target.closest('.settings-resize-handle');
-    if (!handle) return;
-    resizePanel = panel;
-    resizeStart = { x: e.clientX, y: e.clientY, w: panel.offsetWidth, h: panel.offsetHeight };
-    panel.style.zIndex = Date.now();
-    e.preventDefault();
-  });
-
-  openPanels[nodeId] = { panel, slider, valueEl };
+  openPanels[nodeId] = { panel };
 }
 
 function closeSettings(nodeId) {
-  const entry = openPanels[nodeId];
-  if (!entry) return;
-  entry.panel.remove();
-  delete openPanels[nodeId];
+  if (openPanels[nodeId]) { openPanels[nodeId].panel.remove(); delete openPanels[nodeId]; }
 }
 
-// Document-level drag/resize handlers
 document.addEventListener('mousemove', (e) => {
-  if (dragPanel) {
-    dragPanel.style.left = (e.clientX - dragOff.x) + 'px';
-    dragPanel.style.top = (e.clientY - dragOff.y) + 'px';
-  }
-  if (resizePanel) {
-    const dw = e.clientX - resizeStart.x;
-    const dh = e.clientY - resizeStart.y;
-    resizePanel.style.width = Math.max(220, resizeStart.w + dw) + 'px';
-    resizePanel.style.height = Math.max(140, resizeStart.h + dh) + 'px';
-  }
+  if (dragPanel) { dragPanel.style.left = (e.clientX - dragOff.x) + 'px'; dragPanel.style.top = (e.clientY - dragOff.y) + 'px'; }
+  if (resizePanel) { resizePanel.style.width = Math.max(220, resizeStart.w + e.clientX - resizeStart.x) + 'px'; resizePanel.style.height = Math.max(140, resizeStart.h + e.clientY - resizeStart.y) + 'px'; }
 });
 
-document.addEventListener('mouseup', () => {
-  dragPanel = null;
-  resizePanel = null;
-});
+document.addEventListener('mouseup', () => { dragPanel = null; resizePanel = null; });
 
-// Close all settings panels on Escape
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    const ids = Object.keys(openPanels);
-    for (const id of ids) closeSettings(id);
-  }
+  if (e.key === 'Escape') { for (const id of Object.keys(openPanels)) closeSettings(id); }
 });
 
 // ─── Init ──────────────────────────────────────────────────────────────
 
 async function init() {
   await load();
-
-  // Ensure nodes loaded from storage have mw property
-  for (const node of state.nodes) {
-    if (node.mw === undefined) node.mw = 0;
-  }
-
   resizeCanvas();
   draw();
+  startSim();
 }
 
 window.addEventListener('resize', resizeCanvas);

@@ -194,6 +194,59 @@ html, body {
   text-align: right;
 }
 
+/* Read-only value display */
+.settings-value-display {
+  font-size: 22px;
+  font-weight: 600;
+  color: #555;
+  padding: 4px 0;
+}
+
+/* Ramp slider — same styling as MW slider */
+.ramp-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: #d6d2c8;
+  outline: none;
+  cursor: pointer;
+}
+
+.ramp-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #b0aca2;
+  border: 2px solid #8a867e;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.ramp-slider::-webkit-slider-thumb:hover {
+  background: #8a867e;
+}
+
+.ramp-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #b0aca2;
+  border: 2px solid #8a867e;
+  cursor: pointer;
+}
+
+.ramp-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #555;
+  min-width: 40px;
+  text-align: right;
+}
+
 /* Resize handle */
 .settings-resize-handle {
   position: absolute;
