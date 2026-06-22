@@ -36,16 +36,18 @@ function simTick() {
   // Merchant-locked gens: fixed output, no frequency response.
   // Balancing gens: mw = baseSetpoint + govMod
   // govMod = -(1/droop) × ((f-f0)/f0) × rating  (+ when low freq, - when high)
+  // Both are capped at rating — a 100 MVA gen cannot output 150 MW.
   for (const gen of gens) {
+    const maxMw = gen.rating || Infinity;
     if (gen.merchantLock) {
-      gen.mw = gen.dispatchTarget || gen._baseSetpoint || 0;
+      gen.mw = Math.min(gen.dispatchTarget || gen._baseSetpoint || 0, maxMw);
     } else {
       const droop = gen.droop || 0.04;
       const rating = gen.rating || 100;
       const base = gen._baseSetpoint || 0;
       const dev = (state.frequency - f0) / f0;
       const govMod = -(1 / droop) * dev * rating;
-      gen.mw = Math.max(0, base + govMod);
+      gen.mw = Math.min(Math.max(0, base + govMod), maxMw);
     }
   }
 
@@ -123,7 +125,7 @@ function simTick() {
       if (Math.abs(agcTotal) > 0.0001) {
         for (const gen of balancingGens) {
           const share = (gen.rating || 100) / totalBalRating;
-          gen.dispatchTarget = Math.round(Math.max(0, gen.dispatchTarget + agcTotal * share) * 1000) / 1000;
+          gen.dispatchTarget = Math.round(Math.min(Math.max(0, gen.dispatchTarget + agcTotal * share), gen.rating || Infinity) * 1000) / 1000;
           changed = true;
         }
       }
