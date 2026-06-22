@@ -116,7 +116,7 @@ function simTick() {
     const balancingGens = gens.filter(g => !g.merchantLock);
     if (balancingGens.length > 0 && Math.abs(freqErr) > 0.0001) {
       const totalBalRating = balancingGens.reduce((s, g) => s + (g.rating || 100), 0);
-      const agcTotal = 20 * freqErr * dt;  // total MW adjustment this tick
+      const agcTotal = 50 * freqErr * dt;  // total MW adjustment this tick
       for (const gen of balancingGens) {
         const share = (gen.rating || 100) / totalBalRating;
         gen.dispatchTarget = Math.round(Math.max(0, gen.dispatchTarget + agcTotal * share) * 1000) / 1000;
