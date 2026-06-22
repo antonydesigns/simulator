@@ -106,12 +106,36 @@ function simTick() {
     }
   }
 
+  // --- Step 4a: AGC — secondary frequency control ---
+  // Slowly adjusts dispatchTargets of balancing gens to restore 50 Hz.
+  // Merchant-locked gens are excluded — their output is fixed.
+  const freqErr = f0 - state.frequency;
+  const agcDeadband = 0.01;
+  if (Math.abs(freqErr) > agcDeadband) {
+    const balancingGens = gens.filter(g => !g.merchantLock);
+    const totalBalRating = balancingGens.reduce((s, g) => s + (g.rating || 100), 0);
+    if (totalBalRating > 0) {
+      const agcTotal = 10 * freqErr * dt;  // total MW adjustment this tick
+      for (const gen of balancingGens) {
+        const share = (gen.rating || 100) / totalBalRating;
+        gen.dispatchTarget = Math.max(0, gen.dispatchTarget + agcTotal * share);
+        changed = true;
+      }
+    }
+  }
+
   // --- Step 5: Update open settings panels ---
   for (const nodeId of Object.keys(openPanels)) {
     const gen = state.nodes.find(n => n.id === nodeId && n.type === 'generator');
     if (gen) {
       const entry = openPanels[nodeId];
       if (entry.outputEl) entry.outputEl.textContent = Math.round(gen.mw || 0) + ' MW';
+      if (entry.dispatchSlider && entry.dispatchVal) {
+        const dt = gen.dispatchTarget || 0;
+        if (dt > parseInt(entry.dispatchSlider.max)) entry.dispatchSlider.max = dt;
+        entry.dispatchSlider.value = dt;
+        entry.dispatchVal.textContent = dt;
+      }
     }
     const st = state.nodes.find(n => n.id === nodeId && n.type === 'storage');
     if (st) {
@@ -723,6 +747,8 @@ function openSettings(nodeId) {
     entry.outputEl = panel.querySelector('.gen-output');
 
     const dispatchSlider = panel.querySelector('.dispatch-slider'), dispatchVal = panel.querySelector('.dispatch-value');
+    entry.dispatchSlider = dispatchSlider;
+    entry.dispatchVal = dispatchVal;
     dispatchSlider.addEventListener('input', () => { const v = Math.min(parseInt(dispatchSlider.value, 10), node.rating); dispatchVal.textContent = v; node.dispatchTarget = v; });
     dispatchSlider.addEventListener('change', () => persist());
 
