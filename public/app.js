@@ -17,6 +17,8 @@ const sim = {
   running: false,
   interval: null,
   tickHz: 10,
+  dataBuffer: [],
+  captureAccum: 0,
 };
 
 function simTick() {
@@ -118,6 +120,22 @@ function simTick() {
     }
   }
 
+  // --- Step 6: Time-series capture at 1/4 s intervals ---
+  sim.captureAccum += dt;
+  if (sim.captureAccum >= 0.25) {
+    sim.captureAccum -= 0.25;
+    const entry = { t: sim.dataBuffer.length * 0.25, frequency: state.frequency, nodes: {} };
+    for (const node of state.nodes) {
+      entry.nodes[node.id] = { type: node.type, mw: node.mw || 0 };
+      if (node.type === 'generator') {
+        entry.nodes[node.id].dispatchTarget = node.dispatchTarget || 0;
+        entry.nodes[node.id]._baseSetpoint = node._baseSetpoint || 0;
+        entry.nodes[node.id].merchantLock = !!node.merchantLock;
+      }
+    }
+    sim.dataBuffer.push(entry);
+  }
+
   if (changed) draw();
 }
 
@@ -134,6 +152,8 @@ function stopSim() {
 
 function restartSim() {
   stopSim();
+  sim.dataBuffer = [];
+  sim.captureAccum = 0;
   for (const gen of state.nodes.filter(n => n.type === 'generator')) {
     gen._baseSetpoint = gen.dispatchTarget || 0;
     gen.mw = gen._baseSetpoint;
@@ -145,10 +165,10 @@ function restartSim() {
 
 async function saveSnapshot() {
   const snapshot = {
-    nodes: state.nodes,
-    connections: state.connections,
-    frequency: state.frequency,
     savedAt: Date.now(),
+    tickHz: sim.tickHz,
+    captureInterval: 0.25,
+    timeseries: sim.dataBuffer,
   };
   try {
     const res = await fetch('/api/save-snapshot', {
