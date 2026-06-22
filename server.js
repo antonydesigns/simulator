@@ -41,6 +41,27 @@ app.post('/api/grid', (req, res) => {
   res.json({ ok: true });
 });
 
+// --- Snapshot saving ---
+
+const SNAPSHOT_DIR = path.join(__dirname, 'snapshots');
+if (!fs.existsSync(SNAPSHOT_DIR)) fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+
+function randomHex(len) {
+  let s = '';
+  const chars = '0123456789abcdef';
+  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * 16)];
+  return s;
+}
+
+app.post('/api/save-snapshot', (req, res) => {
+  const snapshot = req.body;
+  const ts = Date.now();
+  const filename = `${ts}-${randomHex(5)}.json`;
+  const filepath = path.join(SNAPSHOT_DIR, filename);
+  fs.writeFileSync(filepath, JSON.stringify(snapshot, null, 2), 'utf-8');
+  res.json({ ok: true, filename });
+});
+
 app.listen(PORT, () => {
   console.log(`Power Grid Simulator running at http://localhost:${PORT}`);
 });

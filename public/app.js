@@ -132,6 +132,57 @@ function stopSim() {
   if (sim.interval) { clearInterval(sim.interval); sim.interval = null; }
 }
 
+function restartSim() {
+  stopSim();
+  const gens = state.nodes.filter(n => n.type === 'generator');
+  const loads = state.nodes.filter(n => n.type === 'load');
+  const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
+  const totalGenRating = gens.reduce((s, g) => s + (g.rating || 100), 0);
+  if (totalGenRating > 0 && totalLoad > 0) {
+    for (const gen of gens) {
+      const share = (gen.rating || 100) / totalGenRating * totalLoad;
+      gen.dispatchTarget = Math.round(share);
+      gen._baseSetpoint = gen.dispatchTarget;
+      gen.mw = gen.dispatchTarget;
+    }
+  } else {
+    for (const gen of gens) {
+      gen.dispatchTarget = 0;
+      gen._baseSetpoint = 0;
+      gen.mw = 0;
+    }
+  }
+  state.frequency = 50;
+  draw();
+  updateControls();
+}
+
+async function saveSnapshot() {
+  const snapshot = {
+    nodes: state.nodes,
+    connections: state.connections,
+    frequency: state.frequency,
+    savedAt: Date.now(),
+  };
+  try {
+    const res = await fetch('/api/save-snapshot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(snapshot),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const btn = document.getElementById('save-data-btn');
+      const orig = btn.textContent;
+      btn.textContent = '✅ ' + data.filename;
+      btn.disabled = true;
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
+    }
+  } catch (e) {
+    console.error('Save failed:', e);
+  }
+}
+
 // ─── Pointer state ────────────────────────────────────────────────────
 
 const ptr = {
@@ -762,13 +813,35 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('mouseup', () => { dragPanel = null; resizePanel = null; });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { for (const id of Object.keys(openPanels)) closeSettings(id); } });
 
+// ─── Controls ──────────────────────────────────────────────────────────
+
+function updateControls() {
+  const playBtn = document.getElementById('play-btn');
+  const pauseBtn = document.getElementById('pause-btn');
+  const saveBtn = document.getElementById('save-data-btn');
+  if (sim.running) {
+    playBtn.disabled = true;
+    pauseBtn.disabled = false;
+    saveBtn.disabled = true;
+  } else {
+    playBtn.disabled = false;
+    pauseBtn.disabled = true;
+    saveBtn.disabled = false;
+  }
+}
+
+document.getElementById('play-btn').addEventListener('click', () => { startSim(); updateControls(); });
+document.getElementById('pause-btn').addEventListener('click', () => { stopSim(); updateControls(); });
+document.getElementById('restart-btn').addEventListener('click', restartSim);
+document.getElementById('save-data-btn').addEventListener('click', saveSnapshot);
+
 // ─── Init ──────────────────────────────────────────────────────────────
 
 async function init() {
   await load();
   resizeCanvas();
   draw();
-  startSim();
+  updateControls();
 }
 
 window.addEventListener('resize', resizeCanvas);
