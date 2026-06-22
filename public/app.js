@@ -107,23 +107,20 @@ function simTick() {
   }
 
   // --- Step 4a: AGC (aFRR) — secondary frequency control ---
-  // Adjusts dispatchTargets of balancing gens to bring frequency within
-  // the ENTSO-E tolerance band (±0.05 Hz, per Continental Europe).
-  // Proportional-only: responds when outside the band, idles within it.
+  // Continuously adjusts dispatchTargets of balancing gens to converge
+  // frequency toward exactly 50 Hz, eliminating persistent govMod offset.
+  // No deadband — even tiny errors are corrected (3-decimal precision).
   // Merchant-locked gens are excluded — their output is fixed.
   {
     const freqErr = f0 - state.frequency;
-    const entsoeBand = 0.05;
-    if (Math.abs(freqErr) > entsoeBand) {
-      const balancingGens = gens.filter(g => !g.merchantLock);
-      if (balancingGens.length > 0) {
-        const totalBalRating = balancingGens.reduce((s, g) => s + (g.rating || 100), 0);
-        const agcTotal = 15 * freqErr * dt;  // total MW adjustment this tick
-        for (const gen of balancingGens) {
-          const share = (gen.rating || 100) / totalBalRating;
-          gen.dispatchTarget = Math.round(Math.max(0, gen.dispatchTarget + agcTotal * share) * 10) / 10;
-          changed = true;
-        }
+    const balancingGens = gens.filter(g => !g.merchantLock);
+    if (balancingGens.length > 0 && Math.abs(freqErr) > 0.0001) {
+      const totalBalRating = balancingGens.reduce((s, g) => s + (g.rating || 100), 0);
+      const agcTotal = 20 * freqErr * dt;  // total MW adjustment this tick
+      for (const gen of balancingGens) {
+        const share = (gen.rating || 100) / totalBalRating;
+        gen.dispatchTarget = Math.round(Math.max(0, gen.dispatchTarget + agcTotal * share) * 1000) / 1000;
+        changed = true;
       }
     }
   }
@@ -155,7 +152,7 @@ function simTick() {
     const balancingGens = gens.filter(g => !g.merchantLock);
     const fcrActive = balancingGens.some(g => Math.abs(g.mw - g._baseSetpoint) > 0.5);
     fcrBadge.className = 'status-badge ' + (fcrActive ? 'fcr-active' : 'fcr-inactive');
-    const afrrActive = Math.abs(f0 - state.frequency) > 0.05 && balancingGens.length > 0;
+    const afrrActive = Math.abs(f0 - state.frequency) > 0.001 && balancingGens.length > 0;
     afrrBadge.className = 'status-badge ' + (afrrActive ? 'afrr-active' : 'afrr-inactive');
   }
 
