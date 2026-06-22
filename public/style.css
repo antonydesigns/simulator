@@ -332,3 +332,63 @@ html, body {
   background: linear-gradient(135deg, transparent 50%, #d6d2c8 50%);
   border-radius: 0 0 8px 0;
 }
+
+/* ─── Merchant Lock Toggle ──────────────────────────────────────── */
+
+.sep-top {
+  border-top: 1px solid #e0dcd2;
+  padding-top: 10px;
+  margin-top: 4px;
+}
+
+.toggle {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: #d6d2c8;
+  border-radius: 12px;
+  transition: background 0.2s;
+}
+
+.toggle-knob {
+  position: absolute;
+  content: '';
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.toggle input:checked + .toggle-track {
+  background: #6aaa64;
+}
+
+.toggle input:checked + .toggle-track .toggle-knob {
+  transform: translateX(20px);
+}
+
+.merchant-status {
+  font-size: 14px;
+  font-weight: 500;
+  color: #555;
+  min-width: 80px;
+  text-align: right;
+}

@@ -31,15 +31,20 @@ function simTick() {
   const f0 = 50;
 
   // --- Step 1: Governor droop (instant primary response) ---
-  // gen.mw = baseSetpoint + govMod
+  // Merchant-locked gens: fixed output, no frequency response.
+  // Balancing gens: mw = baseSetpoint + govMod
   // govMod = -(1/droop) × ((f-f0)/f0) × rating  (+ when low freq, - when high)
   for (const gen of gens) {
-    const droop = gen.droop || 0.04;
-    const rating = gen.rating || 100;
-    const base = gen._baseSetpoint || 0;
-    const dev = (state.frequency - f0) / f0;
-    const govMod = -(1 / droop) * dev * rating;
-    gen.mw = Math.max(0, base + govMod);
+    if (gen.merchantLock) {
+      gen.mw = gen.dispatchTarget || gen._baseSetpoint || 0;
+    } else {
+      const droop = gen.droop || 0.04;
+      const rating = gen.rating || 100;
+      const base = gen._baseSetpoint || 0;
+      const dev = (state.frequency - f0) / f0;
+      const govMod = -(1 / droop) * dev * rating;
+      gen.mw = Math.max(0, base + govMod);
+    }
   }
 
   const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
@@ -85,7 +90,9 @@ function simTick() {
   // --- Step 4: Ramp base setpoint toward dispatch target ---
   // Each gen ramps toward its user-set dispatchTarget, not toward load share.
   // The governor + frequency deviation provide the fast balancing on top.
+  // Merchant-locked gens skip this — their output is fixed.
   for (const gen of gens) {
+    if (gen.merchantLock) continue;
     const base = gen._baseSetpoint || 0;
     const target = gen.dispatchTarget || 0;
     const diff = target - base;
@@ -211,7 +218,7 @@ function drawNodes() {
     }
 
     let fillColor;
-    if (node.type === 'generator') fillColor = '#6aaa64';
+    if (node.type === 'generator') fillColor = node.merchantLock ? '#8aaa7a' : '#6aaa64';
     else if (node.type === 'storage') fillColor = '#5a8fbb';
     else if (node.type === 'junction') fillColor = '#b0aca2';
     else fillColor = '#ca9440';
@@ -219,7 +226,10 @@ function drawNodes() {
     ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.fillStyle = fillColor; ctx.fill();
     ctx.strokeStyle = sel || pend ? '#7a9ec0' : '#8a867e';
-    ctx.lineWidth = (sel || pend) ? 3 : 1.5; ctx.stroke();
+    ctx.lineWidth = (sel || pend) ? 3 : 1.5; 
+    if (node.merchantLock) ctx.setLineDash([3, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
 
     const ls = Math.max(10, 11 * v.scale);
     ctx.fillStyle = '#6a665e';
@@ -232,6 +242,7 @@ function drawNodes() {
     else if (node.type === 'junction') label = 'J';
     else label = 'L';
     label += (node.label || node.id.slice(-3));
+    if (node.merchantLock) label += ' 🔒';
     ctx.fillText(label, p.x, p.y + r + 4);
 
     if (node.type !== 'junction' && node.mw !== undefined) {
@@ -379,7 +390,7 @@ function addNode(type, wx, wy) {
   if (type === 'load') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 10 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, dispatchTarget: 0, _baseSetpoint: 0 };
+    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, dispatchTarget: 0, _baseSetpoint: 0, merchantLock: false };
   } else if (type === 'storage') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, chargeRate: 5, dischargeRate: 5, maxCapacity: 100 };
   } else {
@@ -462,6 +473,7 @@ async function load() {
         if (n.droop === undefined) n.droop = 0.04;
         if (n.dispatchTarget === undefined) n.dispatchTarget = 0;
         if (n._baseSetpoint === undefined) n._baseSetpoint = n.mw || 0;
+        if (n.merchantLock === undefined) n.merchantLock = false;
       }
       if (n.type === 'storage') {
         if (n.chargeRate === undefined) n.chargeRate = 5;
@@ -647,6 +659,7 @@ function openSettings(nodeId) {
         <div class="settings-row"><label class="settings-label">Rating (MVA)</label><div class="settings-slider-group"><input type="range" class="rating-slider" min="10" max="500" step="10" value="${node.rating || 100}"><span class="rating-value">${node.rating || 100}</span></div></div>
         <div class="settings-row"><label class="settings-label">Inertia H (s)</label><div class="settings-slider-group"><input type="range" class="inertia-slider" min="1" max="15" step="0.5" value="${node.inertia || 5}"><span class="inertia-value">${(node.inertia || 5).toFixed(1)}</span></div></div>
         <div class="settings-row"><label class="settings-label">Droop (%)</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="1" max="10" step="0.5" value="${(node.droop || 0.04) * 100}"><span class="droop-value">${((node.droop || 0.04) * 100).toFixed(1)}%</span></div></div>
+        <div class="settings-row sep-top"><label class="settings-label">Merchant Lock</label><div class="settings-slider-group"><label class="toggle"><input type="checkbox" class="merchant-toggle" ${node.merchantLock ? 'checked' : ''}><span class="toggle-track"><span class="toggle-knob"></span></span></label><span class="merchant-status">${node.merchantLock ? '🔒 Fixed' : '🔓 Balancing'}</span></div></div>
       </div>
       <div class="settings-resize-handle"></div>`;
 
@@ -671,6 +684,22 @@ function openSettings(nodeId) {
     const drSlider = panel.querySelector('.droop-slider'), drVal = panel.querySelector('.droop-value');
     drSlider.addEventListener('input', () => { const v = parseFloat(drSlider.value); drVal.textContent = v.toFixed(1) + '%'; node.droop = v / 100; });
     drSlider.addEventListener('change', () => persist());
+
+    // Merchant lock toggle
+    const merchantToggle = panel.querySelector('.merchant-toggle');
+    const merchantStatus = panel.querySelector('.merchant-status');
+    if (merchantToggle) {
+      merchantToggle.addEventListener('change', () => {
+        node.merchantLock = merchantToggle.checked;
+        if (node.merchantLock) {
+          node._baseSetpoint = node.dispatchTarget || 0;
+          merchantStatus.textContent = '🔒 Fixed';
+        } else {
+          merchantStatus.textContent = '🔓 Balancing';
+        }
+        persist();
+      });
+    }
 
   } else if (node.type === 'storage') {
     panel.innerHTML = `
