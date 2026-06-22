@@ -141,7 +141,7 @@ function restartSim() {
   if (totalGenRating > 0 && totalLoad > 0) {
     for (const gen of gens) {
       const share = (gen.rating || 100) / totalGenRating * totalLoad;
-      gen.dispatchTarget = Math.round(share);
+      gen.dispatchTarget = Math.min(Math.round(share), gen.rating || Infinity);
       gen._baseSetpoint = gen.dispatchTarget;
       gen.mw = gen.dispatchTarget;
     }
@@ -704,7 +704,7 @@ function openSettings(nodeId) {
     panel.innerHTML = `
       <div class="settings-header"><span class="settings-title">Generator ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
-        <div class="settings-row"><label class="settings-label">Dispatch (MW)</label><div class="settings-slider-group"><input type="range" class="dispatch-slider" min="0" max="500" step="10" value="${node.dispatchTarget || 0}"><span class="dispatch-value">${node.dispatchTarget || 0}</span></div></div>
+        <div class="settings-row"><label class="settings-label">Dispatch (MW)</label><div class="settings-slider-group"><input type="range" class="dispatch-slider" min="0" max="${node.rating}" step="10" value="${node.dispatchTarget || 0}"><span class="dispatch-value">${node.dispatchTarget || 0}</span></div></div>
         <div class="settings-row"><label class="settings-label">Current Output</label><div class="settings-value-display gen-output" style="font-size:18px">${Math.round(node.mw || 0)} MW</div></div>
         <div class="settings-row"><label class="settings-label">Ramp Rate (MW/s)</label><div class="settings-slider-group"><input type="range" class="ramp-slider" min="1" max="50" step="1" value="${node.rampRate || 5}"><span class="ramp-value">${node.rampRate || 5}</span></div></div>
         <div class="settings-row"><label class="settings-label">Rating (MVA)</label><div class="settings-slider-group"><input type="range" class="rating-slider" min="10" max="500" step="10" value="${node.rating || 100}"><span class="rating-value">${node.rating || 100}</span></div></div>
@@ -717,7 +717,7 @@ function openSettings(nodeId) {
     entry.outputEl = panel.querySelector('.gen-output');
 
     const dispatchSlider = panel.querySelector('.dispatch-slider'), dispatchVal = panel.querySelector('.dispatch-value');
-    dispatchSlider.addEventListener('input', () => { const v = parseInt(dispatchSlider.value, 10); dispatchVal.textContent = v; node.dispatchTarget = v; });
+    dispatchSlider.addEventListener('input', () => { const v = Math.min(parseInt(dispatchSlider.value, 10), node.rating); dispatchVal.textContent = v; node.dispatchTarget = v; });
     dispatchSlider.addEventListener('change', () => persist());
 
     const rampSlider = panel.querySelector('.ramp-slider'), rampVal = panel.querySelector('.ramp-value');
@@ -725,7 +725,19 @@ function openSettings(nodeId) {
     rampSlider.addEventListener('change', () => persist());
 
     const ratSlider = panel.querySelector('.rating-slider'), ratVal = panel.querySelector('.rating-value');
-    ratSlider.addEventListener('input', () => { const v = parseInt(ratSlider.value, 10); ratVal.textContent = v; node.rating = v; });
+    ratSlider.addEventListener('input', () => {
+      const v = parseInt(ratSlider.value, 10);
+      ratVal.textContent = v;
+      node.rating = v;
+      if (node.dispatchTarget > v) {
+        node.dispatchTarget = v;
+        dispatchSlider.max = v;
+        dispatchSlider.value = v;
+        dispatchVal.textContent = v;
+      } else {
+        dispatchSlider.max = v;
+      }
+    });
     ratSlider.addEventListener('change', () => persist());
 
     const inSlider = panel.querySelector('.inertia-slider'), inVal = panel.querySelector('.inertia-value');
@@ -743,7 +755,8 @@ function openSettings(nodeId) {
       merchantToggle.addEventListener('change', () => {
         node.merchantLock = merchantToggle.checked;
         if (node.merchantLock) {
-          node._baseSetpoint = node.dispatchTarget || 0;
+          node.dispatchTarget = Math.min(node.dispatchTarget || 0, node.rating || Infinity);
+          node._baseSetpoint = node.dispatchTarget;
           merchantStatus.textContent = '🔒 Fixed';
         } else {
           merchantStatus.textContent = '🔓 Balancing';
