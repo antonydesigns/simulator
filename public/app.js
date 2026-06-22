@@ -107,20 +107,25 @@ function simTick() {
   }
 
   // --- Step 4a: AGC (aFRR) — secondary frequency control ---
-  // Continuously adjusts dispatchTargets of balancing gens to converge
-  // frequency toward exactly 50 Hz, eliminating persistent govMod offset.
-  // No deadband — even tiny errors are corrected (3-decimal precision).
+  // Ramps dispatchTargets of balancing gens to relieve FCR headroom
+  // and converge frequency toward 50 Hz. Rate-limited to the ramp rate
+  // so dispatchTarget never outruns what the gen can physically follow.
   // Merchant-locked gens are excluded — their output is fixed.
   {
     const freqErr = f0 - state.frequency;
     const balancingGens = gens.filter(g => !g.merchantLock);
     if (balancingGens.length > 0 && Math.abs(freqErr) > 0.0001) {
+      const rampRate = (balancingGens[0].rampRate || 5);
+      const maxAgcDelta = rampRate * dt;  // can't change faster than ramp
       const totalBalRating = balancingGens.reduce((s, g) => s + (g.rating || 100), 0);
-      const agcTotal = 50 * freqErr * dt;  // total MW adjustment this tick
-      for (const gen of balancingGens) {
-        const share = (gen.rating || 100) / totalBalRating;
-        gen.dispatchTarget = Math.round(Math.max(0, gen.dispatchTarget + agcTotal * share) * 1000) / 1000;
-        changed = true;
+      const agcUnclamped = 50 * freqErr * dt;
+      const agcTotal = Math.max(-maxAgcDelta, Math.min(maxAgcDelta, agcUnclamped));
+      if (Math.abs(agcTotal) > 0.0001) {
+        for (const gen of balancingGens) {
+          const share = (gen.rating || 100) / totalBalRating;
+          gen.dispatchTarget = Math.round(Math.max(0, gen.dispatchTarget + agcTotal * share) * 1000) / 1000;
+          changed = true;
+        }
       }
     }
   }
@@ -167,6 +172,8 @@ function simTick() {
         entry.nodes[node.id].dispatchTarget = node.dispatchTarget || 0;
         entry.nodes[node.id]._baseSetpoint = node._baseSetpoint || 0;
         entry.nodes[node.id].merchantLock = !!node.merchantLock;
+        entry.nodes[node.id].rating = node.rating || 100;
+        entry.nodes[node.id].droop = node.droop || 0.04;
       }
     }
     sim.dataBuffer.push(entry);

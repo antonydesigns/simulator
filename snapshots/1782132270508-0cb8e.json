@@ -1,0 +1,2183 @@
+{
+  "savedAt": 1782132270501,
+  "tickHz": 10,
+  "captureInterval": 0.25,
+  "timeseries": [
+    {
+      "t": 0,
+      "frequency": 50,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 0.25,
+      "frequency": 50,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 0.5,
+      "frequency": 50,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 0.75,
+      "frequency": 49.99,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 320
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300.05,
+          "_baseSetpoint": 300,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 1,
+      "frequency": 49.91567278125,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 380
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 312.8580624999998,
+          "dispatchTarget": 300.845,
+          "_baseSetpoint": 300.423,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 1.25,
+      "frequency": 49.83729453564453,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 410
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 331.7387041015618,
+          "dispatchTarget": 302.277,
+          "_baseSetpoint": 301.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 1.5,
+      "frequency": 49.73505712055874,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 361.2351084117879,
+          "dispatchTarget": 305.788,
+          "_baseSetpoint": 302.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 1.75,
+      "frequency": 49.68757029542779,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 375.9456298777744,
+          "dispatchTarget": 308.802,
+          "_baseSetpoint": 303.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 2,
+      "frequency": 49.638054358069795,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 391.8073262657733,
+          "dispatchTarget": 314.008,
+          "_baseSetpoint": 305.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 2.25,
+      "frequency": 49.61564630539719,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 399.3524841722319,
+          "dispatchTarget": 317.8,
+          "_baseSetpoint": 306.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 2.5,
+      "frequency": 49.59317168506101,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 407.48808998256817,
+          "dispatchTarget": 323.803,
+          "_baseSetpoint": 307.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 2.75,
+      "frequency": 49.583626758874836,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 411.35806889290456,
+          "dispatchTarget": 327.945,
+          "_baseSetpoint": 308.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 3,
+      "frequency": 49.575021871668106,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 415.53089380911325,
+          "dispatchTarget": 334.284,
+          "_baseSetpoint": 310.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 3.25,
+      "frequency": 49.5720745579959,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 417.5158405726011,
+          "dispatchTarget": 338.557,
+          "_baseSetpoint": 311.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 3.5,
+      "frequency": 49.57058358084491,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 419.656119758597,
+          "dispatchTarget": 344.994,
+          "_baseSetpoint": 312.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 3.75,
+      "frequency": 49.571020241584385,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 420.6742166901752,
+          "dispatchTarget": 349.286,
+          "_baseSetpoint": 313.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 4,
+      "frequency": 49.57317805246767,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 421.7719850092383,
+          "dispatchTarget": 355.701,
+          "_baseSetpoint": 315.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 4.25,
+      "frequency": 49.57535038392056,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 422.29417602269825,
+          "dispatchTarget": 359.953,
+          "_baseSetpoint": 316.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 4.5,
+      "frequency": 49.57937969079053,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 422.857231202706,
+          "dispatchTarget": 366.283,
+          "_baseSetpoint": 317.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 4.75,
+      "frequency": 49.5824422632615,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.1250676395721,
+          "dispatchTarget": 370.467,
+          "_baseSetpoint": 318.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 5,
+      "frequency": 49.587431477145884,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.4138636726047,
+          "dispatchTarget": 376.681,
+          "_baseSetpoint": 320.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 5.25,
+      "frequency": 49.59095066218981,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.5512393743386,
+          "dispatchTarget": 380.78,
+          "_baseSetpoint": 321.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 5.5,
+      "frequency": 49.596432220959194,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.6993654402298,
+          "dispatchTarget": 386.861,
+          "_baseSetpoint": 322.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 5.75,
+      "frequency": 49.600185606671886,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.76982666517574,
+          "dispatchTarget": 390.868,
+          "_baseSetpoint": 323.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 6,
+      "frequency": 49.605919693532144,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.8458018479589,
+          "dispatchTarget": 396.808,
+          "_baseSetpoint": 325.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 6.25,
+      "frequency": 49.609793202860544,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.8819420398439,
+          "dispatchTarget": 400.72,
+          "_baseSetpoint": 326.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 6.5,
+      "frequency": 49.61565681363509,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9209103899746,
+          "dispatchTarget": 406.515,
+          "_baseSetpoint": 327.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 6.75,
+      "frequency": 49.61959193543937,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9394470173247,
+          "dispatchTarget": 410.329,
+          "_baseSetpoint": 328.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 7,
+      "frequency": 49.625521980186925,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9594342323082,
+          "dispatchTarget": 415.975,
+          "_baseSetpoint": 330.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 7.25,
+      "frequency": 49.62948870358061,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.96894183410967,
+          "dispatchTarget": 419.69,
+          "_baseSetpoint": 331.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 7.5,
+      "frequency": 49.635452822906544,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.97919345527225,
+          "dispatchTarget": 425.189,
+          "_baseSetpoint": 332.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 7.75,
+      "frequency": 49.63943575503782,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9840699891944,
+          "dispatchTarget": 428.805,
+          "_baseSetpoint": 333.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 8,
+      "frequency": 49.64541735151948,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9893281372926,
+          "dispatchTarget": 434.154,
+          "_baseSetpoint": 335.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 8.25,
+      "frequency": 49.6494085972571,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9918293551144,
+          "dispatchTarget": 437.67,
+          "_baseSetpoint": 336.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 8.5,
+      "frequency": 49.655399157928095,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9945263062586,
+          "dispatchTarget": 442.869,
+          "_baseSetpoint": 337.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 8.75,
+      "frequency": 49.659394667788696,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99580920323,
+          "dispatchTarget": 446.285,
+          "_baseSetpoint": 338.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 9,
+      "frequency": 49.66538982627251,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9971924935691,
+          "dispatchTarget": 451.334,
+          "_baseSetpoint": 340.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 9.25,
+      "frequency": 49.66938752323989,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9978505028878,
+          "dispatchTarget": 454.65,
+          "_baseSetpoint": 341.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 9.5,
+      "frequency": 49.67538503998297,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99856000486494,
+          "dispatchTarget": 459.549,
+          "_baseSetpoint": 342.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 9.75,
+      "frequency": 49.67938385873696,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99889750372455,
+          "dispatchTarget": 462.765,
+          "_baseSetpoint": 343.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 10,
+      "frequency": 49.685382585052295,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99926141362937,
+          "dispatchTarget": 467.514,
+          "_baseSetpoint": 345.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 10.25,
+      "frequency": 49.689381979180666,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99943451981,
+          "dispatchTarget": 470.63,
+          "_baseSetpoint": 346.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 10.5,
+      "frequency": 49.69538132589642,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9996211724517,
+          "dispatchTarget": 475.229,
+          "_baseSetpoint": 347.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 10.75,
+      "frequency": 49.699381015139444,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9997099601584,
+          "dispatchTarget": 478.245,
+          "_baseSetpoint": 348.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 11,
+      "frequency": 49.705380680064124,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99980569596516,
+          "dispatchTarget": 482.694,
+          "_baseSetpoint": 350.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 11.25,
+      "frequency": 49.709380520674095,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.999851235973,
+          "dispatchTarget": 485.61,
+          "_baseSetpoint": 351.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 11.5,
+      "frequency": 49.71538034881097,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99990033972335,
+          "dispatchTarget": 489.909,
+          "_baseSetpoint": 352.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 11.75,
+      "frequency": 49.7193802670584,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99992369760133,
+          "dispatchTarget": 492.725,
+          "_baseSetpoint": 353.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 12,
+      "frequency": 49.72538017890826,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9999488833534,
+          "dispatchTarget": 496.874,
+          "_baseSetpoint": 355.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 12.25,
+      "frequency": 49.72938013697664,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9999608638186,
+          "dispatchTarget": 499.59,
+          "_baseSetpoint": 356.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 12.5,
+      "frequency": 49.735380091763645,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99997378181587,
+          "dispatchTarget": 503.589,
+          "_baseSetpoint": 357.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 12.75,
+      "frequency": 49.739380070256544,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99997992670194,
+          "dispatchTarget": 506.205,
+          "_baseSetpoint": 358.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 13,
+      "frequency": 49.74538004706639,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9999865524596,
+          "dispatchTarget": 510.054,
+          "_baseSetpoint": 360.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 13.25,
+      "frequency": 49.749380036035205,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.999989704227,
+          "dispatchTarget": 512.57,
+          "_baseSetpoint": 361.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 13.5,
+      "frequency": 49.75538002414078,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9999931026356,
+          "dispatchTarget": 516.269,
+          "_baseSetpoint": 362.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 13.75,
+      "frequency": 49.75938001848279,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9999947192044,
+          "dispatchTarget": 518.685,
+          "_baseSetpoint": 363.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 14,
+      "frequency": 49.765380012382025,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99999646227934,
+          "dispatchTarget": 522.234,
+          "_baseSetpoint": 365.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 14.25,
+      "frequency": 49.76938000947999,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9999972914317,
+          "dispatchTarget": 524.55,
+          "_baseSetpoint": 366.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 14.5,
+      "frequency": 49.77538000635085,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9999981854703,
+          "dispatchTarget": 527.949,
+          "_baseSetpoint": 367.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 14.75,
+      "frequency": 49.77938000486237,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99999861075196,
+          "dispatchTarget": 530.165,
+          "_baseSetpoint": 368.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 15,
+      "frequency": 49.7853800032574,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9999990693131,
+          "dispatchTarget": 533.414,
+          "_baseSetpoint": 370.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 15.25,
+      "frequency": 49.78938000249395,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9999992874432,
+          "dispatchTarget": 535.53,
+          "_baseSetpoint": 371.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 15.5,
+      "frequency": 49.79538000167076,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99999952264164,
+          "dispatchTarget": 538.629,
+          "_baseSetpoint": 372.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 15.75,
+      "frequency": 49.79938000127917,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9999996345225,
+          "dispatchTarget": 540.645,
+          "_baseSetpoint": 373.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 16,
+      "frequency": 49.80538000085694,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99999975516016,
+          "dispatchTarget": 543.594,
+          "_baseSetpoint": 375.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 16.25,
+      "frequency": 49.8093800006561,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99999981254416,
+          "dispatchTarget": 545.51,
+          "_baseSetpoint": 376.345,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 16.5,
+      "frequency": 49.81538000043953,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.9999998744199,
+          "dispatchTarget": 548.309,
+          "_baseSetpoint": 377.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    },
+    {
+      "t": 16.75,
+      "frequency": 49.819380000336515,
+      "nodes": {
+        "nmqngztp6": {
+          "type": "load",
+          "mw": 300
+        },
+        "nmqnh6azg": {
+          "type": "junction",
+          "mw": 0
+        },
+        "nmqnh6azh": {
+          "type": "load",
+          "mw": 420
+        },
+        "nmqp503p4": {
+          "type": "generator",
+          "mw": 423.99999990385294,
+          "dispatchTarget": 550.125,
+          "_baseSetpoint": 378.845,
+          "merchantLock": false
+        },
+        "nmqp503p5": {
+          "type": "generator",
+          "mw": 300,
+          "dispatchTarget": 300,
+          "_baseSetpoint": 300,
+          "merchantLock": true
+        }
+      }
+    }
+  ]
+}
