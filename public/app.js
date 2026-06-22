@@ -134,23 +134,9 @@ function stopSim() {
 
 function restartSim() {
   stopSim();
-  const gens = state.nodes.filter(n => n.type === 'generator');
-  const loads = state.nodes.filter(n => n.type === 'load');
-  const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
-  const totalGenRating = gens.reduce((s, g) => s + (g.rating || 100), 0);
-  if (totalGenRating > 0 && totalLoad > 0) {
-    for (const gen of gens) {
-      const share = (gen.rating || 100) / totalGenRating * totalLoad;
-      gen.dispatchTarget = Math.min(Math.round(share), gen.rating || Infinity);
-      gen._baseSetpoint = gen.dispatchTarget;
-      gen.mw = gen.dispatchTarget;
-    }
-  } else {
-    for (const gen of gens) {
-      gen.dispatchTarget = 0;
-      gen._baseSetpoint = 0;
-      gen.mw = 0;
-    }
+  for (const gen of state.nodes.filter(n => n.type === 'generator')) {
+    gen._baseSetpoint = gen.dispatchTarget || 0;
+    gen.mw = gen._baseSetpoint;
   }
   state.frequency = 50;
   draw();
