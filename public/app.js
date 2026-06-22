@@ -118,7 +118,7 @@ function simTick() {
       const agcTotal = 10 * freqErr * dt;  // total MW adjustment this tick
       for (const gen of balancingGens) {
         const share = (gen.rating || 100) / totalBalRating;
-        gen.dispatchTarget = Math.max(0, gen.dispatchTarget + agcTotal * share);
+        gen.dispatchTarget = Math.round(Math.max(0, gen.dispatchTarget + agcTotal * share) * 10) / 10;
         changed = true;
       }
     }
@@ -131,10 +131,10 @@ function simTick() {
       const entry = openPanels[nodeId];
       if (entry.outputEl) entry.outputEl.textContent = Math.round(gen.mw || 0) + ' MW';
       if (entry.dispatchSlider && entry.dispatchVal) {
-        const dt = gen.dispatchTarget || 0;
-        if (dt > parseInt(entry.dispatchSlider.max)) entry.dispatchSlider.max = dt;
-        entry.dispatchSlider.value = dt;
-        entry.dispatchVal.textContent = dt;
+        const d = gen.dispatchTarget || 0;
+        if (d > parseInt(entry.dispatchSlider.max)) entry.dispatchSlider.max = d;
+        entry.dispatchSlider.value = d;
+        entry.dispatchVal.textContent = d.toFixed(1);
       }
     }
     const st = state.nodes.find(n => n.id === nodeId && n.type === 'storage');
@@ -142,6 +142,17 @@ function simTick() {
       const entry = openPanels[nodeId];
       if (entry.socEl) entry.socEl.textContent = Math.round(st.mw || 0) + ' MWh';
     }
+  }
+
+  // --- Step 5a: Update FCR / aFRR status badges ---
+  {
+    const fcrBadge = document.getElementById('fcr-badge');
+    const afrrBadge = document.getElementById('afrr-badge');
+    const balancingGens = gens.filter(g => !g.merchantLock);
+    const fcrActive = balancingGens.some(g => Math.abs(g.mw - g._baseSetpoint) > 0.5);
+    fcrBadge.className = 'status-badge ' + (fcrActive ? 'fcr-active' : 'fcr-inactive');
+    const afrrActive = Math.abs(f0 - state.frequency) > 0.01 && balancingGens.length > 0;
+    afrrBadge.className = 'status-badge ' + (afrrActive ? 'afrr-active' : 'afrr-inactive');
   }
 
   // --- Step 6: Time-series capture at 1/4 s intervals ---
