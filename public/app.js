@@ -163,6 +163,9 @@ function simTick() {
     afrrBadge.className = 'status-badge ' + (afrrActive ? 'afrr-active' : 'afrr-inactive');
   }
 
+  // --- Step 5b: Refresh stats panel ---
+  updateStatsPanel();
+
   // --- Step 6: Time-series capture at 1/4 s intervals ---
   sim.captureAccum += dt;
   if (sim.captureAccum >= 0.25) {
@@ -206,6 +209,7 @@ function restartSim() {
   state.frequency = 50;
   draw();
   updateControls();
+  updateStatsPanel();
 }
 
 async function saveSnapshot() {
@@ -901,6 +905,88 @@ document.getElementById('pause-btn').addEventListener('click', () => { stopSim()
 document.getElementById('restart-btn').addEventListener('click', restartSim);
 document.getElementById('save-data-btn').addEventListener('click', saveSnapshot);
 
+// ─── Stats Panel ────────────────────────────────────────────────────────
+
+let statsPanelVisible = false;
+
+function updateStatsPanel() {
+  const body = document.getElementById('stats-body');
+  if (!body || !statsPanelVisible) return;
+
+  const gens = state.nodes.filter(n => n.type === 'generator');
+  const loads = state.nodes.filter(n => n.type === 'load');
+  const storages = state.nodes.filter(n => n.type === 'storage');
+  const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
+  const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
+  const totalStor = storages.reduce((s, st) => s + (st.mw || 0), 0);
+  const netImbalance = totalGen + totalStor - totalLoad;
+
+  let html = '';
+
+  // --- Supply ---
+  html += '<div class="stats-section">';
+  html += '<div class="stats-section-title">⚡ Supply</div>';
+  for (const gen of gens) {
+    const base = gen._baseSetpoint || 0;
+    const fcr = (gen.mw || 0) - base;
+    const tag = gen.merchantLock ? '<span class="merchant-tag">🔒</span>' : '';
+    html += '<div class="stats-row">';
+    html += '<span><span class="gen-name">' + gen.id.slice(-4) + '</span>' + tag + '</span>';
+    html += '<span class="value">' + Math.round(gen.mw || 0) + ' MW</span>';
+    html += '</div>';
+    if (Math.abs(fcr) > 0.5) {
+      html += '<div class="stats-row" style="padding-left:12px;font-size:12px;color:#999;">';
+      html += '<span>base ' + Math.round(base) + ' + FCR ' + (fcr > 0 ? '+' : '') + Math.round(fcr) + '</span>';
+      html += '</div>';
+    }
+  }
+  html += '<div class="stats-row total"><span>Total supply</span><span class="value">' + Math.round(totalGen) + ' MW</span></div>';
+  html += '</div>';
+
+  // --- Demand ---
+  html += '<div class="stats-section">';
+  html += '<div class="stats-section-title">🔌 Demand</div>';
+  for (const load of loads) {
+    html += '<div class="stats-row"><span>' + load.id.slice(-4) + '</span><span class="value">' + Math.round(load.mw || 0) + ' MW</span></div>';
+  }
+  html += '<div class="stats-row total"><span>Total demand</span><span class="value">' + Math.round(totalLoad) + ' MW</span></div>';
+  html += '</div>';
+
+  // --- Storage ---
+  if (storages.length > 0) {
+    html += '<div class="stats-section">';
+    html += '<div class="stats-section-title">🔋 Storage</div>';
+    for (const st of storages) {
+      const dir = (st.mw || 0) >= 0 ? 'charging' : 'discharging';
+      html += '<div class="stats-row"><span>' + st.id.slice(-4) + ' (' + dir + ')</span><span class="value">' + Math.round(Math.abs(st.mw || 0)) + ' MW</span></div>';
+    }
+    html += '<div class="stats-row total"><span>Net storage</span><span class="value">' + (totalStor >= 0 ? '+' : '') + Math.round(totalStor) + ' MW</span></div>';
+    html += '</div>';
+  }
+
+  // --- System ---
+  html += '<div class="stats-section">';
+  html += '<div class="stats-section-title">📊 System</div>';
+  html += '<div class="stats-row"><span>Frequency</span><span class="value">' + state.frequency.toFixed(3) + ' Hz</span></div>';
+  const imbClass = netImbalance > 0.5 ? 'positive' : (netImbalance < -0.5 ? 'negative' : '');
+  html += '<div class="stats-row"><span>Net imbalance</span><span class="value ' + imbClass + '">' + (netImbalance > 0 ? '+' : '') + netImbalance.toFixed(1) + ' MW</span></div>';
+  html += '<div class="stats-row"><span>Rated headroom</span><span class="value">' + gens.reduce((s, g) => s + Math.max(0, (g.rating || 100) - (g.mw || 0)), 0).toFixed(0) + ' MW</span></div>';
+  html += '</div>';
+
+  body.innerHTML = html;
+}
+
+document.getElementById('stats-btn').addEventListener('click', () => {
+  statsPanelVisible = !statsPanelVisible;
+  document.getElementById('stats-panel').classList.toggle('hidden');
+  if (statsPanelVisible) updateStatsPanel();
+});
+
+document.getElementById('stats-close-btn').addEventListener('click', () => {
+  statsPanelVisible = false;
+  document.getElementById('stats-panel').classList.add('hidden');
+});
+
 // ─── Init ──────────────────────────────────────────────────────────────
 
 async function init() {
@@ -908,6 +994,7 @@ async function init() {
   resizeCanvas();
   draw();
   updateControls();
+  updateStatsPanel();
 }
 
 window.addEventListener('resize', resizeCanvas);
