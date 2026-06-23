@@ -6,7 +6,7 @@
 - freshnessExpectation: high
 - updateTriggerSummary: update when architecture, physics model, files, or workflow materially change
 
-A browser-based 2D canvas power grid simulator. Server: Express on port 4000. Client: 1002 lines of vanilla JS in `public/app.js`. No build step, no frontend dependencies.
+A browser-based 2D canvas power grid simulator with realistic physics (swing equation, DC power flow, droop governor, AGC, protection relays). Server: Express on port 4000. Client: ~2565 lines of vanilla JS in `public/app.js`. No build step, no frontend dependencies.
 
 ## Quick start
 ```bash
@@ -19,10 +19,10 @@ npm run index       # manually rebuild codebase-index.json
 
 | File | Lines | Purpose |
 |---|---|---|
-| `server.js` | 68 | Express: load/save grid, save snapshots, static serve |
-| `public/app.js` | 1051 | All simulation engine + canvas UI + interaction logic |
-| `public/index.html` | 44 | Canvas + controls overlay + stats panel |
-| `public/style.css` | 608 | Dark-theme styling for panels, controls, canvas |
+| `server.js` | ~80 | Express: load/save grid, save snapshots, static serve |
+| `public/app.js` | ~2565 | All simulation engine + canvas UI + interaction logic |
+| `public/index.html` | ~50 | Canvas + controls overlay + stats panel |
+| `public/style.css` | ~610 | Dark-theme styling for panels, controls, canvas |
 | `scripts/index-codebase.js` | ~215 | Codebase index generator (auto-runs on commit) |
 | `scripts/install-hooks.js` | ~40 | Installs post-commit git hook |
 | `codebase-index.json` | — | Auto-generated symbol/import index (gitignored) |
@@ -31,30 +31,111 @@ npm run index       # manually rebuild codebase-index.json
 
 ## Simulation model (10 Hz tick)
 
-Five-step loop running at 10 Hz:
+Ten-step physics loop running at 10 Hz, executed per island:
 
-### Step 1 — Governor droop with turbine time constant (FCR / primary control)
-FCR responds continuously via a first-order turbine lag:
-- **Balancing gens**: target = `_baseSetpoint + govMod` where `govMod = -(1/droop) × ((f-f₀)/f₀) × rating`
-- **FCR-only gens**: same FCR, but dispatch target is fixed (no AGC)
-- **Fixed gens**: output = `dispatchTarget` (no FCR, no AGC)
-- Actual `gen.mw` approaches target with a **turbine time constant** (default 1s) instead of a hard rate limit
-- The dispatch `rampRate` (MW/s) is a separate limit for schedule following and AGC — it does NOT apply to FCR
+### Step 1 — Governor droop + baseline + AGC offset (primary control)
+Each generator dispatches to a target that combines its baseline contract, full droop governor response (no FCR headroom clamp), and AGC offset:
 
-### Step 2 — Storage response
-Batteries charge from surplus (absorb excess MW) or discharge into deficit, rate-limited by `chargeRate` / `dischargeRate` and bounded by `maxCapacity` (state of charge in MWh).
+- **Balancing mode**: `target = baselineContract + govMod + agcOffset`
+  - `govMod = -(1/droop) × ((f-f₀)/f₀) × rating` — full droop, no clamp
+- **FCR-only mode**: same FCR response, no AGC participation
+- **Fixed mode**: `target = baselineContract` — no frequency response
+- Generator output approaches target with a **first-order turbine lag**: `mw += (target - mw) × dt / T`
+  - Ramp-up: `T = turbineTimeConstant` (default 1s)
+  - Ramp-down: `T = rampDownTC` (default 0.3s — 3× faster, configurable)
+- Target clamped by `afrrMin`/`afrrMax` bounds, rating, and 0 MW floor
 
-### Step 3 — Swing equation (frequency)
-`df/dt = (imbalance × f₀) / (2 × totalInertiaEnergy)` where `totalInertiaEnergy = Σ (Hᵢ × ratingᵢ)`. Frequency is clamped to [45, 55] Hz.
+### Step 2 — Storage FCR
+Storage dispatches with its own droop response around a baseline contract:
 
-### Step 4 — Ramp
-`_baseSetpoint` drifts toward `dispatchTarget` at `rampRate` MW/s. Merchant-locked gens skip this.
+- **Balancing mode**: `target = baselineContract + govMod + agcOffset`
+  - `govMod = -(1/droop) × ((f-f₀)/f₀) × dischargeRate`
+- **Fixed mode**: `target = baselineContract + fixedTarget`
+- Target clamped by charge rate (negative) and discharge rate (positive), plus SoC limits
+- Response smoothed with 0.1s time constant (faster than thermal gens)
+- State of charge tracks energy: `soc -= mwResponse × dt / 3600`
 
-### Step 4a — AGC (aFRR / secondary control)
-Slowly adjusts `dispatchTarget` of all balancing gens to restore 50 Hz. Rate-limited to `rampRate` per gen. Proportional distribution by rating share.
+### Step 3 — Swing equation (frequency dynamics)
+`df/dt = (imbalance × f₀) / (2 × totalInertiaEnergy)`
 
-### Step 5–6
-UI panel refresh + time-series capture every 0.25 s for snapshot export.
+- **Generator islands**: inertia from `Σ (Hᵢ × ratingᵢ)` of all online gens
+- **Storage-only islands**: synthetic inertia from `Σ (dischargeRate × 3)` of storage units
+- **No supply**: frequency decays at 10 Hz/s
+- Frequency clamped to [45, 55] Hz
+
+### Step 4 — Generator frequency protection
+Generators trip if frequency exceeds limits for 1 second:
+- **Overspeed**: >52 Hz → trip, red X overlay
+- **Underfrequency**: <48 Hz → trip, red X overlay
+- Events logged to `sim.events[]`
+
+### Step 5 — DC Power Flow
+Solves per-island using B' matrix + Gaussian elimination:
+
+- Builds nodal admittance matrix from connection reactances
+- Slack bus absorbs island imbalance (first gen or first node)
+- Line flows: `P_ij = (θ_i - θ_j) / X_ij`
+- Lines color-coded by loading percentage (green → yellow → red)
+- Only active (non-tripped) lines participate
+
+### Step 6 — Line tripping + cascade
+Overloaded lines accumulate a trip timer based on severity:
+
+| Loading | Trip time |
+|---|---|
+| >200% | 0.5s |
+| 150-200% | 2s |
+| 120-150% | 5s |
+| 100-120% | 10s |
+
+- Progress bar drawn on overloaded lines
+- Tripped lines turn dashed grey with X
+- Cascade: trips redistribute flow → more overloads → more trips
+- Events logged with flow and timestamp
+
+### Step 7 — Under-Frequency Load Shedding (UFLS)
+Stepped shedding latching on frequency thresholds:
+
+| Frequency | Shed (cumulative) |
+|---|---|
+| <49.0 Hz | 10% |
+| <48.5 Hz | 25% |
+| <48.0 Hz | 50% |
+
+- Shed percentage latches up (needs ≥49.5 Hz to restore)
+- Orange `SHD N%` badge on shed loads
+- `baseMw` stored to allow restoration
+
+### Step 8 — AGC (aFRR / secondary control) — Generators
+Slowly adjusts `agcOffset` of balancing gens to restore 50 Hz:
+
+- Rate limit: 5 MW/s per gen (0.5 MW/tick)
+- Proportional distribution by upward headroom (afrrMax rating share)
+- Aggression: `50 × freqErr × dt`
+- Anti-windup clamped by FCR headroom boundaries
+
+### Step 8b — AGC — Storage
+Same as gen AGC but faster:
+
+- Rate limit: 20 MW/s (2 MW/tick)
+- Proportional distribution by charge+discharge headroom
+- Aggression: `100 × freqErr × dt` (more aggressive than gens)
+- Anti-windup clamped by physical limits
+
+### Step 9–10
+- UI panel refresh (settings panels, frequency HUD)
+- Time-series capture every 0.25s to `dataBuffer` for snapshot export
+
+## Stranded island handling
+- **Gen-only island**: gens ramp to 0, lines zeroed, freq held at 50 Hz
+- **Load-only island** (no supply): loads drop to 0, lines zeroed
+- **Mixed with tripped lines**: BFS from both gens AND storage roots; loads not reachable via active connections get ⚠️ warning indicator and flash off-screen directional arrows
+- Storage root inclusion prevents loads served by storage from being falsely marked stranded
+
+## Data capture
+- `sim.dataBuffer` captures every 0.25s: frequency, per-node mw, baselineContract, agcOffset, soc, shedPct, connection flows/loading/tripped status, island membership, initial grid topology
+- **Save Data** button → POST `/api/save-snapshot` → writes to `snapshots/{timestamp}-{token}.json`
+- Snapshots include grid state at snapshot time for replayability
 
 ## Interaction model
 
@@ -69,27 +150,62 @@ UI panel refresh + time-series capture every 0.25 s for snapshot export.
 | Double-click line | Split line with junction node |
 | Del / Backspace | Delete selected nodes |
 | Escape | Clear selection / pending connection / close all settings panels |
+| **J key** | Toggle between junction mode (default) and **status mode** (line inspection) |
+| Click line (status mode) | Select line (gold glow) |
+| Ctrl+click line (status mode) | Multiselect lines |
+| **Ctrl+C** (status mode) | Copy selected line's reactance + thermal limit |
+| **Ctrl+V** (2 nodes selected) | Paste line properties onto new connection between them |
+| **Ctrl+Shift+V** (lines selected) | Paste line properties onto selected lines |
+| **Click frequency HUD** | Toggle frequency history chart (last 60s, draggable) |
+| **Island header hover** | Show island bounding box with dashed outline + full node extent |
 
 ### Controls bar
 - **▶ Play / ⏸ Pause / ⟳ Restart** — simulation lifecycle
-- **⚖️ Balance** — instantly redistributes generator dispatch targets proportionally by rating to match total demand
+- **⚖️ Balance** — resets all island frequencies to 50 Hz, clears trips/shedding, then distributes load proportionally across flexible gens AND storage (by rating/discharge rate). Storage can charge (negative baseline) when surplus exists. Calls `persist()` and `updateControls()` after distribution.
 - **💾 Save Data** — exports time-series to `snapshots/` as JSON
 - **FCR / aFRR badges** — light up when primary/secondary control is active
-- **📊 Stats panel** — expandable supply/demand breakdown with per-generator FCR split
+- **📊 Stats panel** — expandable supply/demand breakdown with per-node decomposition
+
+### Stats panel
+For each generator and storage node, shows:
+```
+G-123 (gen)   +145 MW
+  base 100 + FCR +47 + AGC -2
+
+S-ABC (storage)   -30 MW
+  SoC: 72/100 MWh
+  base 0 + FCR -20 + AGC -10
+```
+- "FCR" shows the full governor response (no headroom clamp) for both gens and storage
+- "AGC" shows accumulated secondary control offset
+- Same consistent terminology across both node types
 
 ### Settings panels per node type
-- **Generator:** dispatch target (MW), ramp rate, rating (MVA), inertia H (s), droop (%), mode selector (Balancing / FCR Only / Fixed)
-- **Load:** demand slider (MW)
-- **Storage:** charge/discharge rate, max capacity, state-of-charge readout
-
-Panels are draggable, resizable, and independently scrollable.
+- **Generator**: baseline contract (MW), ramp up/down TC (s), rating (MVA), inertia H (s), droop (%), modfe selector (Balancing / FCR Only / Fixed), aFRR min/max bounds, FCR headroom (MW)
+- **Load**: demand slider (MW)
+- **Storage**: baseline contract (MW), discharge rate (MW), charge rate (MW), max capacity (MWh), SoC readout, droop (%), mode selector (Balancing / Fixed / Idle), FCR headroom (MW)
+- Panels are draggable, resizable, and independently scrollable, max 350px height
 
 ## Physics constants
 - Frequency: 50 Hz nominal, clamped 45–55 Hz
-- Default droop: 4% (governor speed droop)
-- Default inertia: 5 s per generator
-- Default ramp rate: 5 MW/s — governs ALL output changes (FCR, schedule following, AGC)
+- Default droop: 4% (speed governor droop)
+- Default inertia: 5s per generator
+- Default turbine time constant: 1.0s (ramp-up), 0.3s (ramp-down)
+- Default battery time constant: 0.1s
 - Default rating: 100 MVA
+- Synthetic inertia for storage-only: 3× discharge rate
+- Storage AGC rate: 20 MW/s, gen AGC rate: 5 MW/s
+
+## Node short IDs
+Format `T-NNNX` (e.g. `G-354A`, `L-271B`, `S-480M`):
+- G = generator, L = load, S = storage, J = junction
+- Generated at creation with `shortId(type)` — replaces opaque `id.slice(-4)`
+
+## Island visualization
+- Each electrical island gets a color (8-color cycle)
+- Hover island header → dashed bounding box with fill
+- Selected network gets thicker border + ▶ prefix
+- Frequency label per island header
 
 ## API
 
@@ -108,13 +224,14 @@ For codebase queries, read `codebase-index.json` first, then inspect specific fi
 
 ### Key call chains
 - `init()` → `load()` → `resizeCanvas()` → `draw()` → `updateControls()` → `updateStatsPanel()`
-- `startSim()` → `setInterval(simTick, 100ms)` → 5-step physics loop
+- `startSim()` → `setInterval(simTick, 100ms)` → 10-step physics loop
 - Canvas events → mouse handlers → `draw()`, `persist()`, or context menu
-- All state mutable on `state` object (nodes, connections, view, frequency)
+- `simTick()` → `recomputeNetworks()` → per-island loop: governor → storage → swing eq → protection → DC power flow → line trip → UFLS → AGC (gen + storage) → UI refresh → capture
+- `balanceGrid()` → reset trips/shed/freq → `findNetworks()` → distribute load across flex gens + storage → `persist()` → `draw()` → `updateControls()` → `updateStatsPanel()`
 
 ### State objects
-- `state` — grid data, view transform, frequency, selection, pending connections
-- `sim` — simulation lifecycle (running, interval, tickHz, dataBuffer)
+- `state` — grid data (nodes, connections), view transform, frequency, selection, pending connections, line clipboard, line mode, networks, stranded loads
+- `sim` — simulation lifecycle (running, interval, tickHz, dataBuffer, events)
 - `ptr` — pointer state machine (downWorld, isDragging, isPanning, isSelecting, etc.)
 - `openPanels` — open settings panels keyed by node ID
 
