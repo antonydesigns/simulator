@@ -131,17 +131,15 @@ function simTick() {
         let target = bc + govMod + (st.agcOffset || 0);
         target = Math.max(-cr, Math.min(dr, target));
         target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
-        // Smooth response with time constant (storage is faster than gen but not instant)
-        const stTC = 0.3;
+        // Smooth response with time constant (storage can ramp fast but not slam)
+        const stTC = 0.1;
         const prevResp = st.mwResponse || 0;
-        // On first activation or large step change, respond faster
-        const effTC = (prevResp === 0 || Math.abs(target - prevResp) > 500) ? 0.05 : stTC;
-        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, dt / effTC);
+        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, dt / stTC);
       } else if (st.mode === 'fixed') {
         let target = bc + (st.fixedTarget || 0);
         target = Math.max(-cr, Math.min(dr, target));
         target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
-        st.mwResponse = (st.mwResponse || 0) + (target - (st.mwResponse || 0)) * Math.min(1, dt / 0.3);
+        st.mwResponse = (st.mwResponse || 0) + (target - (st.mwResponse || 0)) * Math.min(1, dt / 0.1);
       }
       st.mw = Math.max(0, Math.min(cap, soc - st.mwResponse * dt / 3600));
     }
@@ -160,7 +158,7 @@ function simTick() {
     } else if (storages.length > 0) {
       // Storage-only island: freq sustained by storage response
       net.freqPrev = net.freq;
-      const stoInertia = storages.reduce((s, st) => s + ((st.dischargeRate || 500) * 0.3), 0); // synthetic inertia from discharge capacity
+      const stoInertia = storages.reduce((s, st) => s + ((st.dischargeRate || 500) * 3), 0); // synthetic inertia from discharge capacity
       let dfdt = stoInertia > 0 ? (imbalance * f0) / (2 * stoInertia) : 0;
       net.freq = Math.max(45, Math.min(55, freq + dfdt * dt));
     } else {
