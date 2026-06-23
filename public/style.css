@@ -515,6 +515,26 @@ html, body {
   overflow-y: auto;
 }
 
+.stats-island-select {
+  margin-bottom: 10px;
+}
+
+.stats-chart-btn {
+  width: 100%;
+  margin-top: 8px;
+  background: #2c6b9e;
+  color: white;
+  border: none;
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.stats-chart-btn:hover {
+  background: #1f5280;
+}
+
 .stats-section {
   margin-bottom: 10px;
 }

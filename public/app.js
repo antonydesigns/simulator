@@ -204,7 +204,9 @@ function simTick() {
   sim.captureAccum += dt;
   if (sim.captureAccum >= 0.25) {
     sim.captureAccum -= 0.25;
-    const entry = { t: sim.dataBuffer.length * 0.25, frequency: state.frequency, nodes: {} };
+    const netFreqs = {};
+    for (const net of state.networks) netFreqs[net.id] = net.freq;
+    const entry = { t: sim.dataBuffer.length * 0.25, frequency: state.frequency, networks: netFreqs, nodes: {} };
     for (const node of state.nodes) {
       entry.nodes[node.id] = { type: node.type, mw: node.mw || 0 };
       if (node.type === 'generator') {
@@ -1005,7 +1007,7 @@ function openSettings(nodeId) {
         </div>
         <div class="settings-row"><label class="settings-label">Rating</label>
           <div class="settings-slider-group">
-            <input type="range" class="rating-slider" min="1" max="5000" value="${node.rating || 100}">
+            <input type="range" class="rating-slider" min="1" max="500" value="${node.rating || 100}">
             <span class="rating-value">${node.rating || 100} MVA</span>
           </div>
         </div>
@@ -1278,20 +1280,55 @@ document.getElementById('save-data-btn').addEventListener('click', saveSnapshot)
 // ─── Stats Panel ────────────────────────────────────────────────────────
 
 let statsPanelVisible = false;
+let selectedNetworkId = 'all';
 
 function updateStatsPanel() {
   const body = document.getElementById('stats-body');
   if (!body || !statsPanelVisible) return;
 
-  const gens = state.nodes.filter(n => n.type === 'generator');
-  const loads = state.nodes.filter(n => n.type === 'load');
-  const storages = state.nodes.filter(n => n.type === 'storage');
+  // Build network selector
+  const nets = state.networks && state.networks.length > 0 ? state.networks : [];
+  let html = '';
+
+  if (nets.length > 0) {
+    html += '<div class="stats-island-select">';
+    html += '<select id="island-select" onchange="selectedNetworkId=this.value;updateStatsPanel();" style="width:100%;padding:4px;font-size:13px;border:1px solid #d6d2c8;border-radius:4px;background:#faf8f4">';
+    if (nets.length > 1) {
+      html += '<option value="all"' + (selectedNetworkId === 'all' ? ' selected' : '') + '>🌐 All islands</option>';
+    }
+    for (const net of nets) {
+      const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+      const gCount = netNodes.filter(n => n.type === 'generator').length;
+      const lCount = netNodes.filter(n => n.type === 'load').length;
+      const sCount = netNodes.filter(n => n.type === 'storage').length;
+      let label = '🌐 ' + net.id;
+      const parts = [];
+      if (gCount) parts.push(gCount + 'G');
+      if (lCount) parts.push(lCount + 'L');
+      if (sCount) parts.push(sCount + 'S');
+      if (parts.length) label += ' (' + parts.join(', ') + ')';
+      html += '<option value="' + net.id + '"' + (selectedNetworkId === net.id ? ' selected' : '') + '>' + label + '</option>';
+    }
+    html += '</select>';
+    html += '</div>';
+  }
+
+  // Filter nodes by selected island
+  const nodeFilter = selectedNetworkId === 'all' || !nets.length
+    ? n => true
+    : n => nets.find(net => net.id === selectedNetworkId)?.nodeIds.has(n.id);
+
+  const gens = state.nodes.filter(n => n.type === 'generator' && nodeFilter(n));
+  const loads = state.nodes.filter(n => n.type === 'load' && nodeFilter(n));
+  const storages = state.nodes.filter(n => n.type === 'storage' && nodeFilter(n));
   const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
   const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
   const totalStor = storages.reduce((s, st) => s + (st.mwResponse || 0), 0);
   const netImbalance = totalGen + totalStor - totalLoad;
 
-  let html = '';
+  const islandFreq = selectedNetworkId !== 'all' && nets.length
+    ? (nets.find(net => net.id === selectedNetworkId)?.freq || 50)
+    : state.frequency;
 
   // --- Supply ---
   html += '<div class="stats-section">';
@@ -1303,7 +1340,7 @@ function updateStatsPanel() {
     html += '<span><span class="gen-name">' + (gen.shortId || gen.id.slice(-4)) + '</span>' + tag + '</span>';
     html += '<span class="value">' + Math.round(gen.mw || 0) + ' MW</span>';
     html += '</div>';
-    const dev = (state.frequency - 50) / 50;
+    const dev = (islandFreq - 50) / 50;
     const govMod = -(1 / (gen.droop || 0.04)) * dev * (gen.rating || 100);
     const fcrHeadroom = gen.fcrHeadroom || 10;
     const fcrResponse = Math.max(-fcrHeadroom, Math.min(fcrHeadroom, govMod));
@@ -1344,14 +1381,17 @@ function updateStatsPanel() {
   // --- System ---
   html += '<div class="stats-section">';
   html += '<div class="stats-section-title">📊 System</div>';
-  if (state.networks && state.networks.length > 1) {
-    html += '<div class="stats-row"><span>Islands</span><span class="value">' + state.networks.length + '</span></div>';
+  if (nets.length > 1 && selectedNetworkId === 'all') {
+    html += '<div class="stats-row"><span>Islands</span><span class="value">' + nets.length + '</span></div>';
   }
-  html += '<div class="stats-row"><span>Frequency</span><span class="value">' + state.frequency.toFixed(3) + ' Hz</span></div>';
+  html += '<div class="stats-row"><span>Frequency</span><span class="value">' + islandFreq.toFixed(3) + ' Hz</span></div>';
   const imbClass = netImbalance > 0.5 ? 'positive' : (netImbalance < -0.5 ? 'negative' : '');
   html += '<div class="stats-row"><span>Net imbalance</span><span class="value ' + imbClass + '">' + (netImbalance > 0 ? '+' : '') + netImbalance.toFixed(1) + ' MW</span></div>';
   html += '<div class="stats-row"><span>Rated headroom</span><span class="value">' + gens.reduce((s, g) => s + Math.max(0, (g.rating || 100) - (g.mw || 0)), 0).toFixed(0) + ' MW</span></div>';
   html += '</div>';
+
+  // --- Chart toggle button ---
+  html += '<button class="stats-chart-btn" onclick="freqChartVisible=!freqChartVisible;document.getElementById(\'freq-chart-panel\').classList.toggle(\'hidden\',!freqChartVisible);if(freqChartVisible)drawFreqChart();">📈 Frequency Graph</button>';
 
   body.innerHTML = html;
 }
@@ -1381,11 +1421,20 @@ function drawFreqChart() {
   const data = sim.dataBuffer;
   if (data.length < 2) return;
 
+  // Resolve which frequency trace to draw
+  function getFreq(d) {
+    if (selectedNetworkId !== 'all' && d.networks && d.networks[selectedNetworkId] !== undefined) {
+      return d.networks[selectedNetworkId];
+    }
+    return d.frequency;
+  }
+
   // Determine Y range — pad by 1 Hz above/below min/max
   let minF = 50, maxF = 50;
   for (const d of data) {
-    if (d.frequency < minF) minF = d.frequency;
-    if (d.frequency > maxF) maxF = d.frequency;
+    const f = getFreq(d);
+    if (f < minF) minF = f;
+    if (f > maxF) maxF = f;
   }
   // Clamp to sensible range and add padding
   minF = Math.max(45, Math.min(49, minF - 0.5));
@@ -1432,7 +1481,7 @@ function drawFreqChart() {
     const d = data[i];
     if (d.t < minT) continue;
     const x = pad.left + ((d.t - minT) / tRange) * pw;
-    const y = pad.top + ph - ((d.frequency - minF) / fRange) * ph;
+    const y = pad.top + ph - ((getFreq(d) - minF) / fRange) * ph;
     if (!started) { ctx.moveTo(x, y); started = true; }
     else ctx.lineTo(x, y);
   }
@@ -1452,7 +1501,7 @@ function drawFreqChart() {
   if (data.length > 0) {
     const last = data[data.length - 1];
     const lx = pw + pad.left;
-    const ly = pad.top + ph - ((last.frequency - minF) / fRange) * ph;
+    const ly = pad.top + ph - ((getFreq(last) - minF) / fRange) * ph;
     ctx.fillStyle = '#2c6b9e';
     ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2); ctx.fill();
   }
@@ -1482,15 +1531,21 @@ document.getElementById('stats-panel').addEventListener('mousedown', (e) => {
 
 // ─── Frequency Chart ──────────────────────────────────────────
 
-// Detect clicks on the frequency HUD
+// Detect clicks on any frequency HUD box
 canvas.addEventListener('click', (e) => {
   const screen = mouseToScreen(e);
+  const nets = state.networks && state.networks.length > 0 ? state.networks : [{ id: 'net_0' }];
   const pad = 14, bw = 170, bh = 48;
-  const rx = window.innerWidth - bw - pad, ry = pad;
-  if (screen.x >= rx && screen.x <= rx + bw && screen.y >= ry && screen.y <= ry + bh) {
-    freqChartVisible = !freqChartVisible;
-    document.getElementById('freq-chart-panel').classList.toggle('hidden', !freqChartVisible);
-    if (freqChartVisible) drawFreqChart();
+  const rx = window.innerWidth - bw - pad;
+  let ry = pad;
+  for (let i = 0; i < Math.max(1, nets.length); i++) {
+    if (screen.x >= rx && screen.x <= rx + bw && screen.y >= ry && screen.y <= ry + bh) {
+      freqChartVisible = !freqChartVisible;
+      document.getElementById('freq-chart-panel').classList.toggle('hidden', !freqChartVisible);
+      if (freqChartVisible) drawFreqChart();
+      break;
+    }
+    ry += bh + 4;
   }
 });
 
