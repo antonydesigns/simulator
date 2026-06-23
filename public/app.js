@@ -124,9 +124,11 @@ function simTick() {
       if (load.noiseEnabled) {
         const patSec = sim.simTime * 720; // 2 real min = 1 pattern day
         const mult = demandCurve(patSec);
-        // Add per-load random drift (±10% slow random walk)
-        load._noiseDrift = (load._noiseDrift || 0) + (Math.random() - 0.5) * 0.004;
-        load._noiseDrift = Math.max(-0.1, Math.min(0.1, load._noiseDrift));
+        // Add per-load random drift (slow random walk)
+        const noisePct = (load.noisePct || 10) / 100;
+        const step = noisePct * 0.04; // ~25 ticks to swing full range
+        load._noiseDrift = (load._noiseDrift || 0) + (Math.random() - 0.5) * step;
+        load._noiseDrift = Math.max(-noisePct, Math.min(noisePct, load._noiseDrift));
         load.mw = Math.round((load.noiseMin || 100) + ((load.noiseMax || 200) - (load.noiseMin || 100)) * mult * (1 + load._noiseDrift));
         load.baseMw = load.mw;
       }
@@ -1520,7 +1522,7 @@ function shortId(type) {
 function addNode(type, wx, wy) {
   let node;
   if (type === 'load') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10, baseMw: 10, shedPct: 0, noiseEnabled: false, noiseMin: 100, noiseMax: 200 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10, baseMw: 10, shedPct: 0, noiseEnabled: false, noiseMin: 100, noiseMax: 200, noisePct: 10 };
   } else if (type === 'generator') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, tripped: false, freqTimer: 0 };
   } else if (type === 'storage') {
@@ -1646,6 +1648,7 @@ async function load() {
         if (n.noiseEnabled === undefined) n.noiseEnabled = false;
         if (n.noiseMin === undefined) n.noiseMin = 100;
         if (n.noiseMax === undefined) n.noiseMax = 200;
+        if (n.noisePct === undefined) n.noisePct = 10;
       }
       if (n.type === 'storage') {
         if (n.chargeRate === undefined) n.chargeRate = 500;
@@ -2522,6 +2525,10 @@ function openSettings(nodeId) {
           <div class="settings-slider-group"><input type="range" class="noise-max-slider" min="0" max="500" step="10" value="${node.noiseMax || 200}"><span class="noise-max-value">${node.noiseMax || 200}</span></div>
         </div>
         <div class="settings-row noise-row"${node.noiseEnabled ? '' : ' style="display:none"'}>
+          <label class="settings-label">Noise ±%</label>
+          <div class="settings-slider-group"><input type="range" class="noise-pct-slider" min="0" max="100" step="1" value="${node.noisePct || 10}"><span class="noise-pct-value">${node.noisePct || 10}%</span></div>
+        </div>
+        <div class="settings-row noise-row"${node.noiseEnabled ? '' : ' style="display:none"'}>
           <canvas class="demand-preview" width="320" height="80" data-node-id="${node.id}"></canvas>
         </div>
         <div class="settings-row manual-row"${node.noiseEnabled ? ' style="display:none"' : ''}>
@@ -2570,6 +2577,17 @@ function openSettings(nodeId) {
         draw();
       });
       noiseMaxSlider.addEventListener('change', () => persist());
+    }
+
+    const noisePctSlider = panel.querySelector('.noise-pct-slider');
+    const noisePctVal = panel.querySelector('.noise-pct-value');
+    if (noisePctSlider) {
+      noisePctSlider.addEventListener('input', () => {
+        const v = parseInt(noisePctSlider.value, 10);
+        noisePctVal.textContent = v + '%';
+        node.noisePct = v;
+      });
+      noisePctSlider.addEventListener('change', () => persist());
     }
 
     // Draw the preview canvas on open
