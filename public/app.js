@@ -98,13 +98,15 @@ function simTick() {
     // --- Handle stranded islands ---
     const hasGen = gens.length > 0, hasLoad = loads.length > 0, hasStor = storages.length > 0;
     if (hasGen && !hasLoad && !hasStor) {
-      // Gen-only island: no demand → ramp output to 0
+      // Gen-only island: no demand → ramp output to 0, zero all line flows
       for (const gen of gens) gen.mw = Math.max(0, (gen.mw || 0) - 50 * dt);
+      for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
     }
     if (!hasGen && !hasStor && hasLoad) {
-      // Load-only island: no supply → loads get nothing
+      // Load-only island: no supply → loads get nothing, zero all line flows
       for (const load of loads) load.mw = 0;
+      for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
     }
 
