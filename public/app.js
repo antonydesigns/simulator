@@ -456,6 +456,7 @@ function balanceGrid() {
   }
   for (const st of state.nodes.filter(n => n.type === 'storage')) {
     st.baselineContract = 0;
+    st.mwResponse = 0;
   }
   for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
   for (const load of state.nodes.filter(n => n.type === 'load')) {
@@ -493,6 +494,7 @@ function balanceGrid() {
         const share = (st.dischargeRate || 50) / totalFlex;
         st.baselineContract = Math.min(Math.round(remaining * share * 10) / 10, st.dischargeRate || 50);
         if (st.mw !== undefined && st.mw < st.baselineContract * 0.05) st.baselineContract = 0;
+        st.mwResponse = st.baselineContract;
       }
     } else if (totalFlex > 0 && remaining < 0) {
       // Surplus: charge storage to absorb excess (gens can't absorb, only curtail)
@@ -502,6 +504,7 @@ function balanceGrid() {
       for (const st of notFixedStor) {
         const cr = st.chargeRate || 50;
         st.baselineContract = -Math.min(Math.round(surplus * (cr / totalRate) * 10) / 10, cr);
+        st.mwResponse = st.baselineContract;
       }
     }
   }
