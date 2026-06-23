@@ -729,7 +729,7 @@ function computeBoundingBox(net) {
     if (n.x > maxX) maxX = n.x;
     if (n.y > maxY) maxY = n.y;
   }
-  const pad = 30;
+  const pad = 60;
   return { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 };
 }
 
@@ -1023,6 +1023,9 @@ canvas.addEventListener('mousemove', (e) => {
       const n = state.nodes.find(nd => nd.id === p.id);
       if (n) { n.x = p.x + dx; n.y = p.y + dy; }
     }
+    // Recompute bounding box so the box follows in real-time
+    const draggedNet = state.networks.find(n => n.id === islandDrag.netId);
+    if (draggedNet) draggedNet.boundingBox = computeBoundingBox(draggedNet);
     draw(); return;
   }
 
@@ -1096,6 +1099,12 @@ canvas.addEventListener('wheel', (e) => {
   state.view.x = mx - w.x * ns; state.view.y = my - w.y * ns; state.view.scale = ns;
   draw();
 }, { passive: false });
+
+canvas.addEventListener('mouseleave', () => {
+  hoveredIslandId = null;
+  hoveredIslandHeader = false;
+  draw();
+});
 
 menu.addEventListener('click', (e) => {
   const item = e.target.closest('.context-menu-item');
