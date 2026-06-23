@@ -9,6 +9,7 @@ const state = {
   view: { x: 0, y: 0, scale: 1 },
   spaceDown: false,
   frequency: 50,
+  clipboard: null, // { nodes: [...copied nodes...], connections: [...] }
 };
 
 // ─── Simulation ───────────────────────────────────────────────────────
@@ -849,7 +850,66 @@ menu.addEventListener('click', (e) => {
 document.addEventListener('click', (e) => { if (!menu.contains(e.target)) hideMenu(); });
 
 document.addEventListener('keydown', (e) => {
+  const meta = e.ctrlKey || e.metaKey;
+
   if (e.key === 'Escape') { state.pendingSourceId = null; state.selectedNodeIds = new Set(); state.hoverLine = null; hideMenu(); draw(); }
+
+  // Ctrl+C — Copy selected nodes
+  if (meta && e.key === 'c' && state.selectedNodeIds.size > 0) {
+    e.preventDefault();
+    const ids = state.selectedNodeIds;
+    const copiedNodes = state.nodes.filter(n => ids.has(n.id)).map(n => ({ ...n }));
+    const copiedIds = new Set(copiedNodes.map(n => n.id));
+    const copiedConns = state.connections.filter(c => copiedIds.has(c.sourceId) && copiedIds.has(c.targetId)).map(c => ({ ...c }));
+    state.clipboard = { nodes: copiedNodes, connections: copiedConns };
+    return;
+  }
+
+  // Ctrl+Shift+V — Paste properties onto matching selected nodes
+  if (meta && e.shiftKey && e.key === 'V' && state.clipboard && state.clipboard.nodes.length === 1 && state.selectedNodeIds.size > 0) {
+    e.preventDefault();
+    const src = state.clipboard.nodes[0];
+    const targets = state.nodes.filter(n => state.selectedNodeIds.has(n.id) && n.type === src.type && n.id !== src.id);
+    for (const t of targets) {
+      if (src.type === 'generator') {
+        t.rating = src.rating; t.inertia = src.inertia; t.droop = src.droop;
+        t.fcrHeadroom = src.fcrHeadroom; t.afrrMin = src.afrrMin; t.afrrMax = src.afrrMax;
+        t.mode = src.mode; t.turbineTimeConstant = src.turbineTimeConstant;
+        t.baselineContract = src.baselineContract;
+      } else if (src.type === 'storage') {
+        t.chargeRate = src.chargeRate; t.dischargeRate = src.dischargeRate;
+        t.maxCapacity = src.maxCapacity; t.mode = src.mode;
+        t.fcrHeadroom = src.fcrHeadroom; t.droop = src.droop; t.fixedTarget = src.fixedTarget;
+      } else if (src.type === 'load') {
+        t.mw = src.mw;
+      }
+    }
+    if (targets.length > 0) persist();
+    draw();
+    return;
+  }
+
+  // Ctrl+V — Paste nodes from clipboard
+  if (meta && !e.shiftKey && e.key === 'v' && state.clipboard && state.clipboard.nodes.length > 0) {
+    e.preventDefault();
+    const idMap = {};
+    const pasted = [];
+    for (const n of state.clipboard.nodes) {
+      const oldId = n.id;
+      const newId = uid();
+      idMap[oldId] = newId;
+      const offset = 30;
+      pasted.push({ ...n, id: newId, x: n.x + offset, y: n.y + offset, shortId: shortId(n.type) });
+    }
+    state.nodes.push(...pasted);
+    for (const c of state.clipboard.connections) {
+      state.connections.push({ sourceId: idMap[c.sourceId], targetId: idMap[c.targetId] });
+    }
+    state.selectedNodeIds = new Set(pasted.map(n => n.id));
+    persist(); draw();
+    return;
+  }
+
   if ((e.key === 'Backspace' || e.key === 'Delete') && state.selectedNodeIds.size > 0) {
     const hadGen = [...state.selectedNodeIds].some(id => state.nodes.find(n => n.id === id)?.type === 'generator');
     for (const id of [...state.selectedNodeIds]) {
