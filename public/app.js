@@ -41,6 +41,7 @@ const sim = {
   tickHz: 10,
   dataBuffer: [],
   captureAccum: 0,
+  events: [],
 };
 
 function recomputeNetworks() {
@@ -187,6 +188,7 @@ function simTick() {
           if (c.tripTimer >= tripTime) {
             c.tripped = true;
             c.tripTimer = tripTime;
+            sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'line-trip', lineId: c.id, loading: pct, flow: c.mw });
           }
         }
       } else {
@@ -314,7 +316,7 @@ function simTick() {
     sim.captureAccum -= 0.25;
     const netFreqs = {};
     for (const net of state.networks) netFreqs[net.id] = net.freq;
-    const entry = { t: sim.dataBuffer.length * 0.25, frequency: state.frequency, networks: netFreqs, nodes: {} };
+    const entry = { t: sim.dataBuffer.length * 0.25, frequency: state.frequency, networks: netFreqs, nodes: {}, connections: {}, nodeNetworks: {} };
     for (const node of state.nodes) {
       entry.nodes[node.id] = { type: node.type, mw: node.mw || 0 };
       if (node.type === 'generator') {
@@ -333,6 +335,23 @@ function simTick() {
         entry.nodes[node.id].mode = node.mode || 'balancing';
         entry.nodes[node.id].maxCapacity = node.maxCapacity || 100;
       }
+    }
+    // Capture connection states
+    for (const c of state.connections) {
+      entry.connections[c.id] = {
+        mw: c.mw || 0,
+        loadingPct: c.loadingPct || 0,
+        tripped: !!c.tripped,
+        tripTimer: c.tripTimer || 0,
+        sourceId: c.sourceId,
+        targetId: c.targetId,
+        reactance: c.reactance,
+        thermalLimit: c.thermalLimit,
+      };
+    }
+    // Capture per-node island membership
+    for (const net of state.networks) {
+      for (const id of net.nodeIds) entry.nodeNetworks[id] = net.id;
     }
     sim.dataBuffer.push(entry);
   }
@@ -356,6 +375,7 @@ function restartSim() {
   stopSim();
   sim.dataBuffer = [];
   sim.captureAccum = 0;
+  sim.events = [];
   for (const gen of state.nodes.filter(n => n.type === 'generator')) {
     gen.agcOffset = 0;
     gen.mw = gen.baselineContract || 0;
@@ -422,7 +442,13 @@ async function saveSnapshot() {
     savedAt: Date.now(),
     tickHz: sim.tickHz,
     captureInterval: 0.25,
+    grid: {
+      nodes: state.nodes.map(n => ({ ...n })),
+      connections: state.connections.map(c => ({ ...c })),
+      view: { ...state.view },
+    },
     timeseries: sim.dataBuffer,
+    events: sim.events,
   };
   try {
     const res = await fetch('/api/save-snapshot', {
@@ -1206,6 +1232,7 @@ async function load() {
     state.connections = data.connections || [];
     if (data.view) state.view = data.view;
     state.selectedNodeIds = new Set(); state.selectedConnIds = new Set();
+    sim.dataBuffer = []; sim.events = []; sim.captureAccum = 0;
     state.frequency = 50;
     // Migrate legacy connections (add id, reactance, thermalLimit, trip fields)
     for (const c of state.connections) {
