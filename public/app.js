@@ -396,7 +396,7 @@ function drawNodes() {
     else if (node.type === 'storage') label = 'S';
     else if (node.type === 'junction') label = 'J';
     else label = 'L';
-    label += (node.label || node.id.slice(-3));
+    label += (node.label || node.shortId || node.id.slice(-4));
     if (node.mode === 'fixed') label += ' 🔒';
     ctx.fillText(label, p.x, p.y + r + 4);
 
@@ -540,16 +540,23 @@ function uid() { return 'n' + (idCounter++).toString(36); }
 
 // ─── Add Node ──────────────────────────────────────────────────────────
 
+function shortId(type) {
+  const prefix = { generator: 'G', load: 'L', storage: 'S', junction: 'J' }[type] || 'N';
+  const digits = Math.floor(Math.random() * 900) + 100;
+  const letter = String.fromCharCode(65 + Math.floor(Math.random() * 26));
+  return `${prefix}-${digits}${letter}`;
+}
+
 function addNode(type, wx, wy) {
   let node;
   if (type === 'load') {
-    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 10 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, dispatchTarget: 0, _baseSetpoint: 0, mode: 'balancing', turbineTimeConstant: 1 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, dispatchTarget: 0, _baseSetpoint: 0, mode: 'balancing', turbineTimeConstant: 1 };
   } else if (type === 'storage') {
-    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, chargeRate: 5, dischargeRate: 5, maxCapacity: 100 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, chargeRate: 5, dischargeRate: 5, maxCapacity: 100 };
   } else {
-    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0 };
   }
   state.nodes.push(node);
   state.selectedNodeIds = new Set([node.id]);
@@ -632,6 +639,8 @@ async function load() {
         // Migrate legacy merchantLock → mode
         if (n.merchantLock !== undefined) { n.mode = n.merchantLock ? 'fixed' : 'balancing'; delete n.merchantLock; }
         if (n.mode === undefined) n.mode = 'balancing';
+        // Assign shortId if missing (legacy grid or freshly added)
+        if (!n.shortId) n.shortId = shortId(n.type);
       }
       if (n.type === 'storage') {
         if (n.chargeRate === undefined) n.chargeRate = 5;
@@ -804,7 +813,7 @@ function openSettings(nodeId) {
 
   const panel = document.createElement('div');
   panel.className = 'settings-panel'; panel.dataset.nodeId = nodeId; panel.style.zIndex = Date.now();
-  const tag = node.label || node.id.slice(-4);
+  const tag = node.label || node.shortId || node.id.slice(-4);
   const entry = { panel };
 
   if (node.type === 'generator') {
@@ -981,7 +990,7 @@ function updateStatsPanel() {
     const fcr = (gen.mw || 0) - base;
     const tag = gen.mode === 'fixed' ? '<span class="merchant-tag">🔒</span>' : (gen.mode === 'fcr-only' ? '<span class="merchant-tag">⚡FCR</span>' : '');
     html += '<div class="stats-row">';
-    html += '<span><span class="gen-name">' + gen.id.slice(-4) + '</span>' + tag + '</span>';
+    html += '<span><span class="gen-name">' + (gen.shortId || gen.id.slice(-4)) + '</span>' + tag + '</span>';
     html += '<span class="value">' + Math.round(gen.mw || 0) + ' MW</span>';
     html += '</div>';
     if (Math.abs(fcr) > 0.5) {
@@ -997,7 +1006,7 @@ function updateStatsPanel() {
   html += '<div class="stats-section">';
   html += '<div class="stats-section-title">🔌 Demand</div>';
   for (const load of loads) {
-    html += '<div class="stats-row"><span>' + load.id.slice(-4) + '</span><span class="value">' + Math.round(load.mw || 0) + ' MW</span></div>';
+    html += '<div class="stats-row"><span>' + (load.shortId || load.id.slice(-4)) + '</span><span class="value">' + Math.round(load.mw || 0) + ' MW</span></div>';
   }
   html += '<div class="stats-row total"><span>Total demand</span><span class="value">' + Math.round(totalLoad) + ' MW</span></div>';
   html += '</div>';
@@ -1008,7 +1017,7 @@ function updateStatsPanel() {
     html += '<div class="stats-section-title">🔋 Storage</div>';
     for (const st of storages) {
       const dir = (st.mw || 0) >= 0 ? 'charging' : 'discharging';
-      html += '<div class="stats-row"><span>' + st.id.slice(-4) + ' (' + dir + ')</span><span class="value">' + Math.round(Math.abs(st.mw || 0)) + ' MW</span></div>';
+      html += '<div class="stats-row"><span>' + (st.shortId || st.id.slice(-4)) + ' (' + dir + ')</span><span class="value">' + Math.round(Math.abs(st.mw || 0)) + ' MW</span></div>';
     }
     html += '<div class="stats-row total"><span>Net storage</span><span class="value">' + (totalStor >= 0 ? '+' : '') + Math.round(totalStor) + ' MW</span></div>';
     html += '</div>';
