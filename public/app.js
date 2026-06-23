@@ -69,9 +69,10 @@ function simTick() {
     const allGens = netNodes.filter(n => n.type === 'generator');
     const gens = allGens.filter(g => !g.tripped);
     const loads = netNodes.filter(n => n.type === 'load');
-    const storages = netNodes.filter(n => n.type === 'storage');
+    const allStorages = netNodes.filter(n => n.type === 'storage');
+    const storages = allStorages.filter(s => !s.tripped);
 
-    if (gens.length === 0 && loads.length === 0 && storages.length === 0) continue;
+    if (gens.length === 0 && loads.length === 0 && allStorages.length === 0) continue;
 
     // --- Step 1: Governor droop + baseline + AGC offset ---
     for (const gen of gens) {
@@ -347,6 +348,11 @@ function simTick() {
         entry.baselineSlider.value = d;
         entry.baselineVal.textContent = Math.round(d) + ' MW';
       }
+      if (entry.shutdownBtn) {
+        entry.shutdownBtn.textContent = gen.tripped ? '🔄 Restart' : '🛑 Shut Down';
+        entry.shutdownBtn.style.background = gen.tripped ? '#27ae60' : 'transparent';
+        entry.shutdownBtn.style.color = gen.tripped ? '#fff' : '#c0392b';
+      }
     }
     const st = state.nodes.find(n => n.id === nodeId && n.type === 'storage');
     if (st) {
@@ -378,6 +384,11 @@ function simTick() {
         entry.bcVal.textContent = (st.baselineContract || 0) >= 0
           ? '+' + Math.round(st.baselineContract || 0) + ' MW'
           : Math.round(st.baselineContract || 0) + ' MW';
+      }
+      if (entry.shutdownBtn) {
+        entry.shutdownBtn.textContent = st.tripped ? '🔄 Restart' : '🛑 Shut Down';
+        entry.shutdownBtn.style.background = st.tripped ? '#27ae60' : 'transparent';
+        entry.shutdownBtn.style.color = st.tripped ? '#fff' : '#c0392b';
       }
     }
   }
@@ -480,6 +491,7 @@ function restartSim() {
     st.baselineContract = 0;
     st.mwResponse = st.baselineContract || 0;
     st.agcOffset = 0;
+    st.tripped = false;
   }
   // Reset tripped lines
   for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
@@ -515,6 +527,7 @@ function balanceGrid() {
     st.baselineContract = 0;
     st.mwResponse = 0;
     st.agcOffset = 0;
+    st.tripped = false;
   }
   for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
   for (const load of state.nodes.filter(n => n.type === 'load')) {
@@ -803,8 +816,8 @@ function drawNodes() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Tripped generator: red X overlay
-    if (node.type === 'generator' && node.tripped) {
+    // Tripped generator or storage: red X overlay
+    if (node.tripped && (node.type === 'generator' || node.type === 'storage')) {
       const s = r * 0.6;
       ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.moveTo(p.x - s, p.y - s); ctx.lineTo(p.x + s, p.y + s); ctx.stroke();
@@ -1945,6 +1958,7 @@ function openSettings(nodeId) {
             </select>
           </div>
         </div>
+        <div class="settings-row sep-top"><button class="gen-shutdown-btn" style="width:100%;padding:6px 0;border:1px solid #c0392b;border-radius:4px;cursor:pointer;font-size:13px;background:${node.tripped ? '#27ae60' : 'transparent'};color:${node.tripped ? '#fff' : '#c0392b'}">${node.tripped ? '🔄 Restart' : '🛑 Shut Down'}</button></div>
       </div>`;
 
     entry.outputEl = panel.querySelector('.gen-output');
@@ -2040,6 +2054,20 @@ function openSettings(nodeId) {
       });
     }
 
+    // Gen shutdown button
+    const genShutdownBtn = panel.querySelector('.gen-shutdown-btn');
+    if (genShutdownBtn) {
+      genShutdownBtn.addEventListener('click', () => {
+        node.tripped = !node.tripped;
+        if (node.tripped) node.mw = 0;
+        persist();
+        genShutdownBtn.textContent = node.tripped ? '🔄 Restart' : '🛑 Shut Down';
+        genShutdownBtn.style.background = node.tripped ? '#27ae60' : 'transparent';
+        genShutdownBtn.style.color = node.tripped ? '#fff' : '#c0392b';
+      });
+      entry.shutdownBtn = genShutdownBtn;
+    }
+
   } else if (node.type === 'storage') {
     const socVal = Math.round(node.mw || 0);
     const chgR = node.chargeRate || 50;
@@ -2085,6 +2113,7 @@ function openSettings(nodeId) {
             </select>
           </div>
         </div>
+        <div class="settings-row sep-top"><button class="storage-shutdown-btn" style="width:100%;padding:6px 0;border:1px solid #c0392b;border-radius:4px;cursor:pointer;font-size:13px;background:${node.tripped ? '#27ae60' : 'transparent'};color:${node.tripped ? '#fff' : '#c0392b'}">${node.tripped ? '🔄 Restart' : '🛑 Shut Down'}</button></div>
       </div>
       <div class="settings-resize-handle"></div>`;
 
@@ -2126,6 +2155,20 @@ function openSettings(nodeId) {
       if (entry.neutralGroup) entry.neutralGroup.style.display = node.mode === 'balancing' ? '' : 'none';
       persist();
     });
+
+    // Storage shutdown button
+    const stShutdownBtn = panel.querySelector('.storage-shutdown-btn');
+    if (stShutdownBtn) {
+      stShutdownBtn.addEventListener('click', () => {
+        node.tripped = !node.tripped;
+        if (node.tripped) { node.mwResponse = 0; node.mw = node.mw || 0; }
+        persist();
+        stShutdownBtn.textContent = node.tripped ? '🔄 Restart' : '🛑 Shut Down';
+        stShutdownBtn.style.background = node.tripped ? '#27ae60' : 'transparent';
+        stShutdownBtn.style.color = node.tripped ? '#fff' : '#c0392b';
+      });
+      entry.shutdownBtn = stShutdownBtn;
+    }
 
     // FCR headroom slider
     const fcrSlider = panel.querySelector('.fcr-headroom-slider');
@@ -2956,6 +2999,7 @@ function openBalanceModal() {
     for (const st of state.nodes.filter(n => n.type === 'storage')) {
       st.mwResponse = st.baselineContract || 0;
       st.agcOffset = 0;
+      st.tripped = false;
     }
     for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
     for (const load of state.nodes.filter(n => n.type === 'load')) {
