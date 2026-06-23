@@ -1002,7 +1002,7 @@ function findNetworks() {
     const match = oldNets.find(o => o.nodeIds && setsEqual(o.nodeIds, nodeIds));
     const net = match || { id: 'net_' + newNets.length, freq: 50, color: ISLAND_COLORS[newNets.length % ISLAND_COLORS.length] };
     net.nodeIds = nodeIds;
-    net.valid = hasGen && hasLoad;
+    net.valid = hasGen || hasLoad;
     net.boundingBox = computeBoundingBox(net);
     if (!match) net.customName = null;
     newNets.push(net);
