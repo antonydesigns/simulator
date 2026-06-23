@@ -423,6 +423,35 @@ html, body {
   margin: 0 4px;
 }
 
+/* ─── Speed slider ─── */
+.speed-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.speed-label {
+  font-size: 14px;
+  cursor: default;
+  user-select: none;
+  line-height: 1;
+}
+.speed-slider {
+  width: 56px;
+  height: 4px;
+  cursor: pointer;
+  accent-color: #6aaa64;
+  vertical-align: middle;
+}
+.speed-value {
+  font-size: 11px;
+  font-weight: 600;
+  color: #555;
+  min-width: 24px;
+  text-align: center;
+  user-select: none;
+  line-height: 1;
+}
+
 /* ─── Status Badges ─────────────────────────────────────────────────── */
 
 .status-badge {

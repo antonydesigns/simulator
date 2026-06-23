@@ -43,6 +43,7 @@ const sim = {
   captureAccum: 0,
   events: [],
   simTime: 0,
+  speed: 1,
 };
 
 function recomputeNetworks() {
@@ -78,7 +79,7 @@ function demandCurve(t) {
 function simTick() {
   recomputeNetworks();
   const f0 = 50;
-  const dt = 1 / sim.tickHz;
+  const dt = (1 / sim.tickHz) * sim.speed;
   sim.simTime += dt;
 
   // Clear stale line flow data — only recomputed lines get updated
@@ -2716,6 +2717,15 @@ document.getElementById('pause-btn').addEventListener('click', () => { stopSim()
 document.getElementById('restart-btn').addEventListener('click', restartSim);
   document.getElementById('balance-btn').addEventListener('click', () => { if (sim.running) return; openBalanceModal(); });
 document.getElementById('save-data-btn').addEventListener('click', saveSnapshot);
+
+// ─── Speed Control ───────────────────────────────────────────────────────
+const speedSlider = document.getElementById('speed-slider');
+const speedValue = document.getElementById('speed-value');
+function updateSpeedDisplay() { speedValue.textContent = sim.speed + '×'; }
+speedSlider.addEventListener('input', () => {
+  sim.speed = parseFloat(speedSlider.value);
+  updateSpeedDisplay();
+});
 
 // ─── Stats Panel ────────────────────────────────────────────────────────
 
