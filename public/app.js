@@ -95,6 +95,19 @@ function simTick() {
     const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
     const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
 
+    // --- Handle stranded islands ---
+    const hasGen = gens.length > 0, hasLoad = loads.length > 0, hasStor = storages.length > 0;
+    if (hasGen && !hasLoad && !hasStor) {
+      // Gen-only island: no demand → ramp output to 0
+      for (const gen of gens) gen.mw = Math.max(0, (gen.mw || 0) - 50 * dt);
+      net.freq = f0; continue;
+    }
+    if (!hasGen && !hasStor && hasLoad) {
+      // Load-only island: no supply → loads get nothing
+      for (const load of loads) load.mw = 0;
+      net.freq = f0; continue;
+    }
+
     // --- Step 2: Storage FCR ---
     for (const st of storages) {
       st.mwResponse = 0;
