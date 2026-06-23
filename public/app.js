@@ -547,7 +547,9 @@ function balanceGrid() {
 
   // Update the UI
   recomputeNetworks();
+  persist();
   draw();
+  updateControls();
   updateStatsPanel();
 }
 
