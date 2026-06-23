@@ -2653,6 +2653,7 @@ function openBalanceModal() {
 
     function updateSummary() {
       // Recalculate remaining
+      function isLocked(e) { return e.lockBtn.classList.contains('balance-locked'); }
       let totalDemand = 0, fixedSupply = 0, lockedSupply = 0;
       for (const e of islandState.loadEntries) totalDemand += Number(e.slider.value);
       for (const e of islandState.fixedEntries) {
@@ -2660,10 +2661,10 @@ function openBalanceModal() {
         else fixedSupply += e.value;
       }
       for (const e of islandState.flexGenEntries) {
-        if (e.locked) lockedSupply += Number(e.slider.value);
+        if (isLocked(e)) lockedSupply += Number(e.slider.value);
       }
       for (const e of islandState.flexStorEntries) {
-        if (e.locked) lockedSupply += Number(e.slider.value);
+        if (isLocked(e)) lockedSupply += Number(e.slider.value);
       }
       const remaining = totalDemand - fixedSupply - lockedSupply;
       const totalDispatched = lockedSupply + fixedSupply;
@@ -2830,22 +2831,25 @@ function openBalanceModal() {
     redistributeBtn.className = 'balance-redistribute-btn';
     redistributeBtn.textContent = '🔄 Redistribute';
     redistributeBtn.addEventListener('click', () => {
+      // Determine lock state from button classes (not stale object property)
+      function isLocked(e) { return e.lockBtn.classList.contains('balance-locked'); }
+
       // Calculate remaining
       let totalDemand = 0, fixedSupply = 0, lockedSupply = 0;
       for (const e of islandState.loadEntries) totalDemand += Number(e.slider.value);
       for (const e of islandState.fixedEntries) fixedSupply += e.value;
       for (const e of islandState.flexGenEntries) {
-        if (e.locked) lockedSupply += Number(e.slider.value);
+        if (isLocked(e)) lockedSupply += Number(e.slider.value);
       }
       for (const e of islandState.flexStorEntries) {
-        if (e.locked) lockedSupply += Number(e.slider.value);
+        if (isLocked(e)) lockedSupply += Number(e.slider.value);
       }
       let remaining = totalDemand - fixedSupply - lockedSupply;
 
       if (remaining > 0) {
         // Distribute across unlocked flex gens + storage
-        const unlockedGens = islandState.flexGenEntries.filter(e => !e.locked);
-        const unlockedStor = islandState.flexStorEntries.filter(e => !e.locked && e.soc > 0);
+        const unlockedGens = islandState.flexGenEntries.filter(e => !isLocked(e));
+        const unlockedStor = islandState.flexStorEntries.filter(e => !isLocked(e) && e.soc > 0);
         const totalGenRating = unlockedGens.reduce((s, e) => s + (e.node.rating || e.maxVal), 0);
         const totalStorRate = unlockedStor.reduce((s, e) => s + e.maxDischarge, 0);
         const totalFlex = totalGenRating + totalStorRate;
@@ -2863,8 +2867,8 @@ function openBalanceModal() {
             e.slider.value = val;
             e.valSpan.textContent = '+' + val + ' MW';
           }
-          // Redistribute shortfall from zeroed storage to gens
-          const newLocked = islandState.flexGenEntries.filter(e => e.locked).reduce((s, e) => s + Number(e.slider.value), 0);
+          // Redistribute shortfall from storage caps to gens
+          const newLocked = islandState.flexGenEntries.filter(e => isLocked(e)).reduce((s, e) => s + Number(e.slider.value), 0);
           const newUnlockedGen = unlockedGens.reduce((s, e) => s + Number(e.slider.value), 0);
           const newUnlockedStor = unlockedStor.reduce((s, e) => s + Number(e.slider.value), 0);
           const totalAfter = fixedSupply + newLocked + newUnlockedGen + newUnlockedStor;
@@ -2885,12 +2889,12 @@ function openBalanceModal() {
       } else if (remaining < 0) {
         // Surplus: zero unlocked gens, distribute charge across unlocked storage
         for (const e of islandState.flexGenEntries) {
-          if (!e.locked) {
+          if (!isLocked(e)) {
             e.slider.value = 0;
             e.valSpan.textContent = '+0 MW';
           }
         }
-        const unlockedStor = islandState.flexStorEntries.filter(e => !e.locked);
+        const unlockedStor = islandState.flexStorEntries.filter(e => !isLocked(e));
         const surplus = -remaining;
         const totalCharge = unlockedStor.reduce((s, e) => s + e.maxCharge, 0);
         if (totalCharge > 0) {
