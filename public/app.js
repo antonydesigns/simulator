@@ -126,18 +126,22 @@ function simTick() {
       if (st.mode === 'balancing') {
         const droop = st.droop || 0.04;
         const dev = (freq - f0) / f0;
-        const govMod = -(1 / droop) * dev * (cap || 100);
-        const headroom = st.fcrHeadroom || 10;
-        let fcrResponse = Math.max(-headroom, Math.min(headroom, govMod));
-        let target = bc + fcrResponse + (st.agcOffset || 0);
+        const effectiveRating = dr; // use discharge rate as MW rating for droop
+        const govMod = -(1 / droop) * dev * effectiveRating;
+        let target = bc + govMod + (st.agcOffset || 0);
         target = Math.max(-cr, Math.min(dr, target));
         target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
-        st.mwResponse = target;
+        // Smooth response with time constant (storage is faster than gen but not instant)
+        const stTC = 0.3;
+        const prevResp = st.mwResponse || 0;
+        // On first activation or large step change, respond faster
+        const effTC = (prevResp === 0 || Math.abs(target - prevResp) > 500) ? 0.05 : stTC;
+        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, dt / effTC);
       } else if (st.mode === 'fixed') {
         let target = bc + (st.fixedTarget || 0);
         target = Math.max(-cr, Math.min(dr, target));
         target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
-        st.mwResponse = target;
+        st.mwResponse = (st.mwResponse || 0) + (target - (st.mwResponse || 0)) * Math.min(1, dt / 0.3);
       }
       st.mw = Math.max(0, Math.min(cap, soc - st.mwResponse * dt / 3600));
     }
@@ -156,7 +160,7 @@ function simTick() {
     } else if (storages.length > 0) {
       // Storage-only island: freq sustained by storage response
       net.freqPrev = net.freq;
-      const stoInertia = storages.reduce((s, st) => s + ((st.mw || 0) > 0.5 ? 0.5 : 0), 0); // small synthetic inertia
+      const stoInertia = storages.reduce((s, st) => s + ((st.dischargeRate || 500) * 0.3), 0); // synthetic inertia from discharge capacity
       let dfdt = stoInertia > 0 ? (imbalance * f0) / (2 * stoInertia) : 0;
       net.freq = Math.max(45, Math.min(55, freq + dfdt * dt));
     } else {
@@ -458,7 +462,7 @@ function restartSim() {
   }
   for (const st of state.nodes.filter(n => n.type === 'storage')) {
     st.baselineContract = 0;
-    st.mwResponse = 0;
+    st.mwResponse = st.baselineContract || 0;
     st.agcOffset = 0;
   }
   // Reset tripped lines
