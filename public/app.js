@@ -35,7 +35,8 @@ function simTick() {
   // --- Step 1: Governor droop + ramp-limited power output ---
   // Each generator's output is rate-limited by rampRate (MW/s).
   // Target for balancing gens: _baseSetpoint + FCR governor response.
-  // Target for merchant-locked gens: dispatchTarget (fixed, no FCR).
+  // Target for fcr-only gens: _baseSetpoint + FCR (fixed base, no AGC).
+  // Target for fixed gens: dispatchTarget (no FCR, no AGC).
   // All physical changes (FCR, schedule following, AGC) compete for the
   // same ramp headroom — the turbine can only change output so fast.
   for (const gen of gens) {
@@ -44,7 +45,7 @@ function simTick() {
     const maxDelta = rampRate * dt;
     let targetMw;
 
-    if (gen.merchantLock) {
+    if (gen.mode === 'fixed') {
       targetMw = Math.min(gen.dispatchTarget || gen._baseSetpoint || 0, maxMw);
     } else {
       const droop = gen.droop || 0.04;
@@ -107,9 +108,9 @@ function simTick() {
   // --- Step 4: Ramp base setpoint toward dispatch target ---
   // Each gen ramps toward its user-set dispatchTarget, not toward load share.
   // The governor + frequency deviation provide the fast balancing on top.
-  // Merchant-locked gens skip this — their output is fixed.
+  // Fixed gens skip this — their output is locked.
   for (const gen of gens) {
-    if (gen.merchantLock) continue;
+    if (gen.mode === 'fixed') continue;
     const base = gen._baseSetpoint || 0;
     const target = gen.dispatchTarget || 0;
     const diff = target - base;
@@ -125,10 +126,11 @@ function simTick() {
   // Ramps dispatchTargets of balancing gens to relieve FCR headroom
   // and converge frequency toward 50 Hz. Rate-limited to the ramp rate
   // so dispatchTarget never outruns what the gen can physically follow.
-  // Merchant-locked gens are excluded — their output is fixed.
+  // Only full-balancing gens (mode === 'balancing') participate.
+  // FCR-only gens and fixed gens are excluded.
   {
     const freqErr = f0 - state.frequency;
-    const balancingGens = gens.filter(g => !g.merchantLock);
+    const balancingGens = gens.filter(g => g.mode === 'balancing');
     if (balancingGens.length > 0 && Math.abs(freqErr) > 0.0001) {
       const rampRate = (balancingGens[0].rampRate || 5);
       const maxAgcDelta = rampRate * dt;  // can't change faster than ramp
@@ -169,9 +171,10 @@ function simTick() {
   {
     const fcrBadge = document.getElementById('fcr-badge');
     const afrrBadge = document.getElementById('afrr-badge');
-    const balancingGens = gens.filter(g => !g.merchantLock);
-    const fcrActive = balancingGens.some(g => Math.abs(g.mw - g._baseSetpoint) > 0.5);
+    const fcrGens = gens.filter(g => g.mode === 'balancing' || g.mode === 'fcr-only');
+    const fcrActive = fcrGens.some(g => Math.abs(g.mw - g._baseSetpoint) > 0.5);
     fcrBadge.className = 'status-badge ' + (fcrActive ? 'fcr-active' : 'fcr-inactive');
+    const balancingGens = gens.filter(g => g.mode === 'balancing');
     const afrrActive = Math.abs(f0 - state.frequency) > 0.001 && balancingGens.length > 0;
     afrrBadge.className = 'status-badge ' + (afrrActive ? 'afrr-active' : 'afrr-inactive');
   }
@@ -189,7 +192,7 @@ function simTick() {
       if (node.type === 'generator') {
         entry.nodes[node.id].dispatchTarget = node.dispatchTarget || 0;
         entry.nodes[node.id]._baseSetpoint = node._baseSetpoint || 0;
-        entry.nodes[node.id].merchantLock = !!node.merchantLock;
+        entry.nodes[node.id].mode = node.mode || 'balancing';
         entry.nodes[node.id].rating = node.rating || 100;
         entry.nodes[node.id].droop = node.droop || 0.04;
       }
@@ -222,6 +225,40 @@ function restartSim() {
   state.frequency = 50;
   draw();
   updateControls();
+  updateStatsPanel();
+}
+
+// ─── Grid Balancing ────────────────────────────────────────────────────
+
+function balanceGrid() {
+  // Distribute total load demand across flexible generators by rating share.
+  // Fixed-mode gens keep their current dispatchTarget — only remaining
+  // demand is distributed. This ensures the grid starts in a steady state.
+  const nodes = state.nodes;
+  const loads = nodes.filter(n => n.type === 'load');
+  const gens = nodes.filter(n => n.type === 'generator');
+  if (!loads.length || !gens.length) return;
+
+  const totalDemand = loads.reduce((sum, n) => sum + (n.mw || 0), 0);
+  const fixedGens = gens.filter(g => g.mode === 'fixed');
+  const flexGens = gens.filter(g => g.mode !== 'fixed');
+
+  // Fixed gens keep what they have
+  const fixedSupply = fixedGens.reduce((sum, g) => sum + Math.min(g.dispatchTarget || 0, g.rating || Infinity), 0);
+  const remaining = Math.max(0, totalDemand - fixedSupply);
+  const totalRating = flexGens.reduce((sum, g) => sum + (g.rating || 100), 0);
+
+  if (totalRating > 0) {
+    for (const gen of flexGens) {
+      const share = (gen.rating || 100) / totalRating;
+      gen.dispatchTarget = Math.min(Math.round(remaining * share * 10) / 10, gen.rating || Infinity);
+      gen._baseSetpoint = gen.dispatchTarget;
+      gen.mw = gen.dispatchTarget;
+    }
+  }
+
+  // Update the UI
+  draw();
   updateStatsPanel();
 }
 
@@ -337,7 +374,7 @@ function drawNodes() {
     }
 
     let fillColor;
-    if (node.type === 'generator') fillColor = node.merchantLock ? '#8aaa7a' : '#6aaa64';
+    if (node.type === 'generator') fillColor = node.mode === 'fixed' ? '#8aaa7a' : '#6aaa64';
     else if (node.type === 'storage') fillColor = '#5a8fbb';
     else if (node.type === 'junction') fillColor = '#b0aca2';
     else fillColor = '#ca9440';
@@ -346,7 +383,7 @@ function drawNodes() {
     ctx.fillStyle = fillColor; ctx.fill();
     ctx.strokeStyle = sel || pend ? '#7a9ec0' : '#8a867e';
     ctx.lineWidth = (sel || pend) ? 3 : 1.5; 
-    if (node.merchantLock) ctx.setLineDash([3, 3]);
+    if (node.mode === 'fixed') ctx.setLineDash([3, 3]);
     ctx.stroke();
     ctx.setLineDash([]);
 
@@ -361,7 +398,7 @@ function drawNodes() {
     else if (node.type === 'junction') label = 'J';
     else label = 'L';
     label += (node.label || node.id.slice(-3));
-    if (node.merchantLock) label += ' 🔒';
+    if (node.mode === 'fixed') label += ' 🔒';
     ctx.fillText(label, p.x, p.y + r + 4);
 
     if (node.type !== 'junction' && node.mw !== undefined) {
@@ -509,7 +546,7 @@ function addNode(type, wx, wy) {
   if (type === 'load') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 10 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, dispatchTarget: 0, _baseSetpoint: 0, merchantLock: false };
+    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, dispatchTarget: 0, _baseSetpoint: 0, mode: 'balancing' };
   } else if (type === 'storage') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, chargeRate: 5, dischargeRate: 5, maxCapacity: 100 };
   } else {
@@ -592,7 +629,9 @@ async function load() {
         if (n.droop === undefined) n.droop = 0.04;
         if (n.dispatchTarget === undefined) n.dispatchTarget = 0;
         if (n._baseSetpoint === undefined) n._baseSetpoint = n.mw || 0;
-        if (n.merchantLock === undefined) n.merchantLock = false;
+        // Migrate legacy merchantLock → mode
+        if (n.merchantLock !== undefined) { n.mode = n.merchantLock ? 'fixed' : 'balancing'; delete n.merchantLock; }
+        if (n.mode === undefined) n.mode = 'balancing';
       }
       if (n.type === 'storage') {
         if (n.chargeRate === undefined) n.chargeRate = 5;
@@ -778,7 +817,7 @@ function openSettings(nodeId) {
         <div class="settings-row"><label class="settings-label">Rating (MVA)</label><div class="settings-slider-group"><input type="range" class="rating-slider" min="10" max="500" step="10" value="${node.rating || 100}"><span class="rating-value">${node.rating || 100}</span></div></div>
         <div class="settings-row"><label class="settings-label">Inertia H (s)</label><div class="settings-slider-group"><input type="range" class="inertia-slider" min="1" max="15" step="0.5" value="${node.inertia || 5}"><span class="inertia-value">${(node.inertia || 5).toFixed(1)}</span></div></div>
         <div class="settings-row"><label class="settings-label">Droop (%)</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="1" max="10" step="0.5" value="${(node.droop || 0.04) * 100}"><span class="droop-value">${((node.droop || 0.04) * 100).toFixed(1)}%</span></div></div>
-        <div class="settings-row sep-top"><label class="settings-label">Merchant Lock</label><div class="settings-slider-group"><label class="toggle"><input type="checkbox" class="merchant-toggle" ${node.merchantLock ? 'checked' : ''}><span class="toggle-track"><span class="toggle-knob"></span></span></label><span class="merchant-status">${node.merchantLock ? '🔒 Fixed' : '🔓 Balancing'}</span></div></div>
+        <div class="settings-row sep-top"><label class="settings-label">Mode</label><div class="settings-slider-group"><select class="gen-mode-select"><option value="balancing" ${node.mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option><option value="fcr-only" ${node.mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option><option value="fixed" ${node.mode === 'fixed' ? 'selected' : ''}>Fixed</option></select></div></div>
       </div>
       <div class="settings-resize-handle"></div>`;
 
@@ -818,19 +857,11 @@ function openSettings(nodeId) {
     drSlider.addEventListener('input', () => { const v = parseFloat(drSlider.value); drVal.textContent = v.toFixed(1) + '%'; node.droop = v / 100; });
     drSlider.addEventListener('change', () => persist());
 
-    // Merchant lock toggle
-    const merchantToggle = panel.querySelector('.merchant-toggle');
-    const merchantStatus = panel.querySelector('.merchant-status');
-    if (merchantToggle) {
-      merchantToggle.addEventListener('change', () => {
-        node.merchantLock = merchantToggle.checked;
-        if (node.merchantLock) {
-          node.dispatchTarget = Math.min(node.dispatchTarget || 0, node.rating || Infinity);
-          node._baseSetpoint = node.dispatchTarget;
-          merchantStatus.textContent = '🔒 Fixed';
-        } else {
-          merchantStatus.textContent = '🔓 Balancing';
-        }
+    // Mode selector
+    const modeSelect = panel.querySelector('.gen-mode-select');
+    if (modeSelect) {
+      modeSelect.addEventListener('change', () => {
+        node.mode = modeSelect.value;
         persist();
       });
     }
@@ -916,6 +947,7 @@ function updateControls() {
 document.getElementById('play-btn').addEventListener('click', () => { startSim(); updateControls(); });
 document.getElementById('pause-btn').addEventListener('click', () => { stopSim(); updateControls(); });
 document.getElementById('restart-btn').addEventListener('click', restartSim);
+document.getElementById('balance-btn').addEventListener('click', balanceGrid);
 document.getElementById('save-data-btn').addEventListener('click', saveSnapshot);
 
 // ─── Stats Panel ────────────────────────────────────────────────────────
@@ -942,7 +974,7 @@ function updateStatsPanel() {
   for (const gen of gens) {
     const base = gen._baseSetpoint || 0;
     const fcr = (gen.mw || 0) - base;
-    const tag = gen.merchantLock ? '<span class="merchant-tag">🔒</span>' : '';
+    const tag = gen.mode === 'fixed' ? '<span class="merchant-tag">🔒</span>' : (gen.mode === 'fcr-only' ? '<span class="merchant-tag">⚡FCR</span>' : '');
     html += '<div class="stats-row">';
     html += '<span><span class="gen-name">' + gen.id.slice(-4) + '</span>' + tag + '</span>';
     html += '<span class="value">' + Math.round(gen.mw || 0) + ' MW</span>';
@@ -1004,6 +1036,7 @@ document.getElementById('stats-close-btn').addEventListener('click', () => {
 
 async function init() {
   await load();
+  balanceGrid();
   resizeCanvas();
   draw();
   updateControls();

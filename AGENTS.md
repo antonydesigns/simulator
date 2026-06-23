@@ -36,7 +36,8 @@ Five-step loop running at 10 Hz:
 ### Step 1 — Governor droop + ramp-limited power output (FCR / primary control)
 Each generator calculates a target MW, then rate-limits actual output toward it:
 - **Balancing gens**: target = `_baseSetpoint + govMod` where `govMod = -(1/droop) × ((f-f₀)/f₀) × rating`
-- **Merchant-locked gens**: target = `dispatchTarget` (fixed, no frequency response)
+- **Fixed gens**: target = `dispatchTarget` (no FCR, no AGC, output locked)
+- **FCR-only gens**: target = `_baseSetpoint + govMod` (FCR active, but no AGC — dispatch target is fixed)
 - Target is capped at `rating` (MVA)
 - Actual `gen.mw` moves toward target at `rampRate` (MW/s) — same physical limit that governs schedule following and AGC
 
@@ -71,12 +72,13 @@ UI panel refresh + time-series capture every 0.25 s for snapshot export.
 
 ### Controls bar
 - **▶ Play / ⏸ Pause / ⟳ Restart** — simulation lifecycle
+- **⚖️ Balance** — instantly redistributes generator dispatch targets proportionally by rating to match total demand
 - **💾 Save Data** — exports time-series to `snapshots/` as JSON
 - **FCR / aFRR badges** — light up when primary/secondary control is active
 - **📊 Stats panel** — expandable supply/demand breakdown with per-generator FCR split
 
 ### Settings panels per node type
-- **Generator:** dispatch target (MW), ramp rate, rating (MVA), inertia H (s), droop (%), merchant lock toggle
+- **Generator:** dispatch target (MW), ramp rate, rating (MVA), inertia H (s), droop (%), mode selector (Balancing / FCR Only / Fixed)
 - **Load:** demand slider (MW)
 - **Storage:** charge/discharge rate, max capacity, state-of-charge readout
 
