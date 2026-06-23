@@ -1164,7 +1164,7 @@ function solveDCPowerFlow(net) {
       const idx = busIdx[n.id];
       if (n.type === 'generator') P[idx] += (n.mw || 0);
       else if (n.type === 'load') P[idx] -= (n.mw || 0);
-      else if (n.type === 'storage') P[idx] -= (n.mwResponse || 0);
+      else if (n.type === 'storage') P[idx] += (n.mwResponse || 0);
     }
 
     let slack = nodes.findIndex(n => n.type === 'generator');
