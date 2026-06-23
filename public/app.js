@@ -151,6 +151,12 @@ function simTick() {
       for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
     }
+    // Storage-only island (disconnected by tripped lines): no response, nominal freq
+    if (!hasGen && !hasLoad && hasStor) {
+      for (const st of storages) { st.mwResponse = 0; }
+      for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
+      net.freq = f0; continue;
+    }
 
     // Note: stranded loads within mixed islands are zeroed after the stranded detection step, below
 
@@ -1451,6 +1457,7 @@ function findNetworks() {
   const adj = {};
   for (const n of state.nodes) adj[n.id] = [];
   for (const c of state.connections) {
+    if (c.tripped) continue;
     if (!adj[c.sourceId]) adj[c.sourceId] = [];
     if (!adj[c.targetId]) adj[c.targetId] = [];
     adj[c.sourceId].push(c.targetId);
