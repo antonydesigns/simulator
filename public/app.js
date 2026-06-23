@@ -108,7 +108,7 @@ function simTick() {
       net.freq = f0; continue;
     }
     if (!hasGen && !hasEffectiveStor && hasLoad) {
-      for (const load of loads) load.mw = 0;
+      for (const load of loads) { load.mw = 0; state.strandedLoadIds.add(load.id); }
       for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
     }
@@ -974,15 +974,15 @@ function drawStrandedIndicators() {
     const onScreen = sp.x >= 0 && sp.x <= ww && sp.y >= 0 && sp.y <= wh;
 
     if (onScreen) {
-      // Warning triangle above the node
+      // Warning sign at top-right of the node (not on top of it)
       if (blink) {
-        ctx.font = '16px -apple-system, BlinkMacSystemFont, sans-serif';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        ctx.font = '18px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillStyle = '#e74c3c';
-        ctx.fillText('⚠', sp.x, sp.y - 8);
+        ctx.fillText('⚠', sp.x + 24, sp.y - 20);
       }
     } else {
-      // Off-screen arrow at edge
+      // Off-screen: triangle arrow at edge pointing toward node + ⚠
       const angle = Math.atan2(load.y - state.view.y / state.view.scale, load.x - state.view.x / state.view.scale);
       let ex = ww / 2, ey = wh / 2;
       const cosA = Math.cos(angle), sinA = Math.sin(angle);
@@ -992,11 +992,26 @@ function drawStrandedIndicators() {
       );
       if (!isFinite(t)) continue;
       ex += cosA * t; ey += sinA * t;
+
+      // Draw triangle arrowhead pointing toward the node
+      const arrowSize = 16;
+      const perpX = Math.cos(angle + Math.PI / 2);
+      const perpY = Math.sin(angle + Math.PI / 2);
+      ctx.fillStyle = '#e74c3c';
+      ctx.beginPath();
+      // Tip points toward the node; base is behind with two wings
+      ctx.moveTo(ex + cosA * arrowSize, ey + sinA * arrowSize);
+      ctx.lineTo(ex - cosA * arrowSize * 0.6 + perpX * arrowSize * 0.45, ey - sinA * arrowSize * 0.6 + perpY * arrowSize * 0.45);
+      ctx.lineTo(ex - cosA * arrowSize * 0.6 - perpX * arrowSize * 0.45, ey - sinA * arrowSize * 0.6 - perpY * arrowSize * 0.45);
+      ctx.closePath();
+      ctx.fill();
+
+      // Flashing ⚠ next to the arrow (offset slightly behind and to the side)
       if (blink) {
-        ctx.font = '20px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.font = '16px -apple-system, BlinkMacSystemFont, sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillStyle = '#e74c3c';
-        ctx.fillText('⚠', ex, ey);
+        ctx.fillText('⚠', ex - cosA * arrowSize * 2.2 - perpX * 6, ey - sinA * arrowSize * 2.2 - perpY * 6);
       }
     }
   }
