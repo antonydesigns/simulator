@@ -136,7 +136,10 @@ function simTick() {
       net.freq = Math.max(0, freq - 10 * dt);
     }
 
-    // --- Step 4: AGC ---
+    // --- Step 4: DC Power Flow ---
+    try { solveDCPowerFlow(net); } catch (e) { /* solver may fail for degenerate cases */ }
+
+    // --- Step 5: AGC ---
     const balancingGens = gens.filter(g => g.mode === 'balancing');
     const freqErr = f0 - net.freq;
     if (balancingGens.length > 0) {
@@ -166,7 +169,7 @@ function simTick() {
 
   let changed = true;
 
-  // --- Step 5: Update open settings panels ---
+  // --- Step 6: Update open settings panels ---
   for (const nodeId of Object.keys(openPanels)) {
     const gen = state.nodes.find(n => n.id === nodeId && n.type === 'generator');
     if (gen) {
@@ -430,21 +433,33 @@ function drawConnections() {
     // Check if both nodes are in the same network
     const sameNet = state.networks && state.networks.some(net => net.nodeIds.has(s.id) && net.nodeIds.has(t.id));
     
+    // Color by loading %
+    let color = '#7a766e';
+    if (sameNet && c.loadingPct !== undefined) {
+      if (c.loadingPct > 120) color = '#8b0000';
+      else if (c.loadingPct > 100) color = '#c0392b';
+      else if (c.loadingPct > 80) color = '#e67e22';
+      else if (c.loadingPct > 60) color = '#d4a017';
+    } else if (!sameNet) {
+      color = '#c0392b';
+    }
+    
     ctx.beginPath();
-    ctx.strokeStyle = sameNet ? '#7a766e' : '#c0392b';
+    ctx.strokeStyle = color;
     ctx.lineWidth = sameNet ? 2 : 1.5;
     if (!sameNet) ctx.setLineDash([4, 4]);
     ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
     ctx.setLineDash([]);
 
-    // Draw thermal limit label at midpoint
-    if (state.view.scale > 0.5) {
+    // Draw flow/limit label at midpoint
+    if (sameNet && state.view.scale > 0.4) {
       const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
+      const flow = c.mw !== undefined ? Math.abs(c.mw).toFixed(0) : '?';
       const limit = c.thermalLimit || 100;
       ctx.fillStyle = '#999';
       ctx.font = '9px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillText(limit + ' MW', mx, my - 2);
+      ctx.fillText(flow + ' / ' + limit + ' MW', mx, my - 2);
     }
   }
 }
@@ -728,6 +743,87 @@ function hitNode(wx, wy) {
     if ((wx - n.x)**2 + (wy - n.y)**2 <= r * r) return n;
   }
   return null;
+}
+
+// ─── DC Power Flow Solver ─────────────────────────────────────────────
+
+function solveDCPowerFlow(net) {
+  const nodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+  if (nodes.length < 2) return;
+
+  const conns = state.connections.filter(c =>
+    net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId) && (c.reactance || 0) > 0
+  );
+  if (conns.length === 0) return;
+
+  // Build bus index
+  const busIdx = {};
+  nodes.forEach((n, i) => { busIdx[n.id] = i; });
+  const nB = nodes.length;
+
+  // Build B' matrix and P vector
+  const B = Array.from({ length: nB }, () => new Float64Array(nB));
+  const P = new Float64Array(nB);
+
+  for (const c of conns) {
+    const i = busIdx[c.sourceId], j = busIdx[c.targetId];
+    const bij = 1 / c.reactance;
+    B[i][j] -= bij; B[j][i] -= bij;
+    B[i][i] += bij; B[j][j] += bij;
+  }
+
+  for (const n of nodes) {
+    const idx = busIdx[n.id];
+    if (n.type === 'generator') P[idx] += (n.mw || 0);
+    else if (n.type === 'load') P[idx] -= (n.mw || 0);
+    else if (n.type === 'storage') P[idx] -= (n.mwResponse || 0);
+  }
+
+  // Slack bus — first generator
+  let slack = nodes.findIndex(n => n.type === 'generator');
+  if (slack < 0) slack = 0;
+
+  // Remove slack: map reducedIdx -> originalIdx
+  const map = [];
+  for (let i = 0; i < nB; i++) if (i !== slack) map.push(i);
+  const m = map.length;
+  if (m === 0) return;
+
+  const Br = Array.from({ length: m }, () => new Float64Array(m));
+  const Pr = new Float64Array(m);
+  for (let ri = 0; ri < m; ri++) {
+    for (let rj = 0; rj < m; rj++) Br[ri][rj] = B[map[ri]][map[rj]];
+    Pr[ri] = P[map[ri]];
+  }
+
+  // Gaussian elimination
+  for (let col = 0; col < m - 1; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < m; r++) if (Math.abs(Br[r][col]) > Math.abs(Br[pivot][col])) pivot = r;
+    if (Math.abs(Br[pivot][col]) < 1e-12) continue;
+    if (pivot !== col) { [Br[col], Br[pivot]] = [Br[pivot], Br[col]]; [Pr[col], Pr[pivot]] = [Pr[pivot], Pr[col]]; }
+    for (let r = col + 1; r < m; r++) {
+      const f = Br[r][col] / Br[col][col];
+      for (let c = col; c < m; c++) Br[r][c] -= f * Br[col][c];
+      Pr[r] -= f * Pr[col];
+    }
+  }
+
+  // Back substitution
+  const theta = new Float64Array(nB);
+  for (let i = m - 1; i >= 0; i--) {
+    let s = Pr[i];
+    for (let j = i + 1; j < m; j++) s -= Br[i][j] * theta[map[j]];
+    theta[map[i]] = Br[i][i] !== 0 ? s / Br[i][i] : 0;
+  }
+
+  // Compute line flows
+  for (const c of conns) {
+    const i = busIdx[c.sourceId], j = busIdx[c.targetId];
+    const flow = (theta[i] - theta[j]) / c.reactance;
+    c.mw = flow;
+    c.loadingPct = (c.thermalLimit > 0) ? (Math.abs(flow) / c.thermalLimit) * 100 : 0;
+  }
 }
 
 // ─── Network Detection ────────────────────────────────────────────────
