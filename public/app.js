@@ -1844,8 +1844,8 @@ document.addEventListener('keydown', (e) => {
     draw();
   }
 
-  // Ctrl+C — Copy selected connections
-  if (meta && e.key === 'c' && state.selectedConnIds.size > 0) {
+  // Ctrl+C — Copy selected connections (only when no nodes selected)
+  if (meta && e.key === 'c' && state.selectedConnIds.size > 0 && state.selectedNodeIds.size === 0) {
     e.preventDefault();
     const copied = state.connections.filter(c => state.selectedConnIds.has(c.id)).map(c => ({ ...c }));
     state.clipboard = { connections: copied };
@@ -1861,6 +1861,7 @@ document.addEventListener('keydown', (e) => {
     const copiedIds = new Set(copiedNodes.map(n => n.id));
     const copiedConns = state.connections.filter(c => copiedIds.has(c.sourceId) && copiedIds.has(c.targetId)).map(c => ({ ...c }));
     state.clipboard = { nodes: copiedNodes, connections: copiedConns };
+    state.lineClipboard = copiedConns[0] ? { reactance: copiedConns[0].reactance, thermalLimit: copiedConns[0].thermalLimit } : null;
     return;
   }
 
