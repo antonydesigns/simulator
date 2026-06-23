@@ -122,7 +122,7 @@ function simTick() {
     // --- Auto Demand Curve (noise) ---
     for (const load of loads) {
       if (load.noiseEnabled) {
-        const patSec = sim.simTime * 720; // 2 real min = 1 pattern day
+        const patSec = sim.simTime * 720 + (load.noisePhaseHrs || 0) * 3600; // 2 real min = 1 pattern day
         const mult = demandCurve(patSec);
         load.mw = Math.round((load.noiseMin || 100) + ((load.noiseMax || 200) - (load.noiseMin || 100)) * mult);
         load.baseMw = load.mw;
@@ -1089,6 +1089,8 @@ function drawLoadCurvePreview(canvas, node) {
   cx.textBaseline = 'bottom'; cx.fillText(maxMw + ' MW', pad.left - 2, pad.top + 1);
   cx.textBaseline = 'top'; cx.fillText(minMw + ' MW', pad.left - 2, pad.top + ph - 1);
 
+  const phaseOffset = (node.noisePhaseHrs || 0) * 3600;
+
   // Draw the daily curve (weekday solid, weekend dashed overlay)
   const daySteps = 240; // 24h × 10 samples
   const day = 86400;
@@ -1098,8 +1100,8 @@ function drawLoadCurvePreview(canvas, node) {
   cx.beginPath();
   for (let i = 0; i <= daySteps; i++) {
     const hour = (i / daySteps) * 24;
-    const todSec = (hour / 24) * day;
-    const mult = demandCurve(todSec); // day 0 = Monday
+    const todSec = (hour / 24) * day + phaseOffset;
+    const mult = demandCurve(todSec);
     const mw = minMw + range * mult;
     const x = pad.left + (i / daySteps) * pw;
     const y = pad.top + ph - ((mw - minMw) / range) * ph;
@@ -1112,7 +1114,7 @@ function drawLoadCurvePreview(canvas, node) {
   cx.beginPath();
   for (let i = 0; i <= daySteps; i++) {
     const hour = (i / daySteps) * 24;
-    const todSec = (hour / 24) * day + 5 * day; // Saturday
+    const todSec = (hour / 24) * day + 5 * day + phaseOffset;
     const mult = demandCurve(todSec);
     const mw = minMw + range * mult;
     const x = pad.left + (i / daySteps) * pw;
@@ -1124,8 +1126,8 @@ function drawLoadCurvePreview(canvas, node) {
 
   // Current position (if simulation is running)
   if (sim.simTime > 0) {
-    const patSec = sim.simTime * 720;
-    const curHour = ((patSec % day) / day) * 24;
+    const patSec = sim.simTime * 720 + phaseOffset;
+    const curHour = (((patSec % day) / day) * 24 + 24) % 24;
     const curMult = demandCurve(patSec);
     const curMw = minMw + range * curMult;
     const cx2 = pad.left + (curHour / 24) * pw;
@@ -1517,7 +1519,7 @@ function shortId(type) {
 function addNode(type, wx, wy) {
   let node;
   if (type === 'load') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10, baseMw: 10, shedPct: 0, noiseEnabled: false, noiseMin: 100, noiseMax: 200 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10, baseMw: 10, shedPct: 0, noiseEnabled: false, noiseMin: 100, noiseMax: 200, noisePhaseHrs: Math.random() * 24 };
   } else if (type === 'generator') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, tripped: false, freqTimer: 0 };
   } else if (type === 'storage') {
@@ -1643,6 +1645,7 @@ async function load() {
         if (n.noiseEnabled === undefined) n.noiseEnabled = false;
         if (n.noiseMin === undefined) n.noiseMin = 100;
         if (n.noiseMax === undefined) n.noiseMax = 200;
+        if (n.noisePhaseHrs === undefined) n.noisePhaseHrs = 0;
       }
       if (n.type === 'storage') {
         if (n.chargeRate === undefined) n.chargeRate = 500;
