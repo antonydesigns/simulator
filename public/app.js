@@ -129,7 +129,7 @@ function simTick() {
         const govMod = -(1 / droop) * dev * (cap || 100);
         const headroom = st.fcrHeadroom || 10;
         let fcrResponse = Math.max(-headroom, Math.min(headroom, govMod));
-        let target = bc + fcrResponse;
+        let target = bc + fcrResponse + (st.agcOffset || 0);
         target = Math.max(-cr, Math.min(dr, target));
         target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
         st.mwResponse = target;
@@ -233,7 +233,7 @@ function simTick() {
       }
     }
 
-    // --- Step 8: AGC ---
+    // --- Step 8: AGC (gens) ---
     const balancingGens = gens.filter(g => g.mode === 'balancing');
     const freqErr = f0 - net.freq;
     if (balancingGens.length > 0) {
@@ -252,6 +252,37 @@ function simTick() {
             const minAgc = (gen.fcrHeadroom || 10) - (gen.baselineContract || 0);
             const maxAgc = (gen.rating || 100) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10);
             gen.agcOffset = Math.max(minAgc, Math.min(maxAgc, gen.agcOffset));
+          }
+        }
+      }
+    }
+
+    // --- Step 8b: AGC (storage) ---
+    const balancingStorages = storages.filter(s => s.mode === 'balancing' && (s.dischargeRate || 500) > 0);
+    if (balancingStorages.length > 0) {
+      const agcRateLimit = 20; // storage can ramp faster than gens
+      const maxDelta = agcRateLimit * dt;
+      const totalStorHeadroom = balancingStorages.reduce((s, st) => {
+        const bc = st.baselineContract || 0;
+        const dr = st.dischargeRate || 500;
+        const cr = st.chargeRate || 500;
+        return s + Math.max(0, dr - bc) + Math.max(0, bc + cr); // upward + downward headroom
+      }, 0);
+      if (totalStorHeadroom > 0) {
+        const totalAgc = 100 * freqErr * dt; // storage AGC is more aggressive
+        for (const st of balancingStorages) {
+          const bc = st.baselineContract || 0;
+          const dr = st.dischargeRate || 500;
+          const cr = st.chargeRate || 500;
+          const stHeadroom = Math.max(0, dr - bc) + Math.max(0, bc + cr);
+          const share = stHeadroom / totalStorHeadroom;
+          const agcDelta = totalAgc * share;
+          const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
+          if (Math.abs(clamped) > 0.0001) {
+            st.agcOffset = (st.agcOffset || 0) + clamped;
+            const maxStAgc = dr - bc - (st.fcrHeadroom || 10);
+            const minStAgc = -(cr + bc - (st.fcrHeadroom || 10));
+            st.agcOffset = Math.max(minStAgc, Math.min(maxStAgc, st.agcOffset));
           }
         }
       }
@@ -372,6 +403,7 @@ function simTick() {
         entry.nodes[node.id].mode = node.mode || 'balancing';
         entry.nodes[node.id].maxCapacity = node.maxCapacity || 100;
         entry.nodes[node.id].baselineContract = node.baselineContract || 0;
+        entry.nodes[node.id].agcOffset = node.agcOffset || 0;
       }
     }
     // Capture connection states
@@ -423,6 +455,7 @@ function restartSim() {
   for (const st of state.nodes.filter(n => n.type === 'storage')) {
     st.baselineContract = 0;
     st.mwResponse = 0;
+    st.agcOffset = 0;
   }
   // Reset tripped lines
   for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
@@ -457,6 +490,7 @@ function balanceGrid() {
   for (const st of state.nodes.filter(n => n.type === 'storage')) {
     st.baselineContract = 0;
     st.mwResponse = 0;
+    st.agcOffset = 0;
   }
   for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
   for (const load of state.nodes.filter(n => n.type === 'load')) {
@@ -1245,7 +1279,7 @@ function addNode(type, wx, wy) {
   } else if (type === 'generator') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, tripped: false, freqTimer: 0 };
   } else if (type === 'storage') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 500, dischargeRate: 500, maxCapacity: 100, mode: 'balancing', baselineContract: 0, fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 500, dischargeRate: 500, maxCapacity: 100, mode: 'balancing', baselineContract: 0, fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0, agcOffset: 0 };
   } else {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0 };
   }
@@ -1370,6 +1404,7 @@ async function load() {
         if (n.dischargeRate === undefined) n.dischargeRate = 500;
         if (n.maxCapacity === undefined) n.maxCapacity = 100;
         if (n.baselineContract === undefined) n.baselineContract = 0;
+        if (n.agcOffset === undefined) n.agcOffset = 0;
         if (n.mode === undefined) n.mode = 'balancing';
         if (n.fcrHeadroom === undefined) n.fcrHeadroom = 10;
         if (n.droop === undefined) n.droop = 0.04;
@@ -1745,7 +1780,7 @@ document.addEventListener('keydown', (e) => {
       const fresh = { ...n, id: newId, x: n.x + offset, y: n.y + offset, shortId: shortId(n.type) };
       if (fresh.type === 'generator') { fresh.tripped = false; fresh.freqTimer = 0; }
       if (fresh.type === 'load') { fresh.shedPct = 0; fresh.baseMw = fresh.mw || 10; }
-      if (fresh.type === 'storage') { fresh.mwResponse = 0; }
+      if (fresh.type === 'storage') { fresh.mwResponse = 0; fresh.agcOffset = 0; }
       pasted.push(fresh);
     }
     state.nodes.push(...pasted);
