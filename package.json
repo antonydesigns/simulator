@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "index": "node scripts/index-codebase.js",
+    "postinstall": "node scripts/index-codebase.js && node scripts/install-hooks.js"
   },
   "dependencies": {
     "express": "^4.18.2"
