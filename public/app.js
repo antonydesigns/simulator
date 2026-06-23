@@ -128,7 +128,8 @@ function simTick() {
   {
     const freqErr = f0 - state.frequency;
     const balancingGens = gens.filter(g => g.mode === 'balancing');
-    if (balancingGens.length > 0 && Math.abs(freqErr) > 0.0001) {
+    const agcDeadband = 0.02; // Hz — AGC ignores errors within ±20 mHz, prevents hunting
+    if (balancingGens.length > 0 && Math.abs(freqErr) > agcDeadband) {
       const rampRate = (balancingGens[0].rampRate || 5);
       const maxAgcDelta = rampRate * dt;  // can't change faster than ramp
       const totalBalRating = balancingGens.reduce((s, g) => s + (g.rating || 100), 0);
