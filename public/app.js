@@ -866,7 +866,7 @@ function solveDCPowerFlow(net) {
   if (nodes.length < 2) return;
 
   const conns = state.connections.filter(c =>
-    net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId) && (c.reactance || 0) > 0
+    !c.tripped && net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId) && (c.reactance || 0) > 0
   );
   if (conns.length === 0) return;
 
@@ -968,6 +968,7 @@ function findNetworks() {
   const adj = {};
   for (const n of state.nodes) adj[n.id] = [];
   for (const c of state.connections) {
+    if (c.tripped) continue;
     if (!adj[c.sourceId]) adj[c.sourceId] = [];
     if (!adj[c.targetId]) adj[c.targetId] = [];
     adj[c.sourceId].push(c.targetId);
