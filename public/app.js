@@ -1770,7 +1770,7 @@ document.getElementById('stats-panel').addEventListener('mousedown', (e) => {
 canvas.addEventListener('click', (e) => {
   const screen = mouseToScreen(e);
 
-  // Check HUD box click (toggle chart)
+  // Check HUD box click (toggle chart + select island)
   const nets = state.networks && state.networks.length > 0 ? state.networks : [{ id: 'net_0' }];
   const pad = 14, bw = 170, bh = 48;
   const rx = window.innerWidth - bw - pad;
@@ -1778,6 +1778,12 @@ canvas.addEventListener('click', (e) => {
   let hitHud = false;
   for (let i = 0; i < Math.max(1, nets.length); i++) {
     if (screen.x >= rx && screen.x <= rx + bw && screen.y >= ry && screen.y <= ry + bh) {
+      // Select this island
+      if (nets[i].id) {
+        selectedNetworkId = nets[i].id;
+        if (statsPanelVisible) updateStatsPanel();
+      }
+      // Toggle chart
       freqChartVisible = !freqChartVisible;
       document.getElementById('freq-chart-panel').classList.toggle('hidden', !freqChartVisible);
       if (freqChartVisible) drawFreqChart();
@@ -1786,16 +1792,16 @@ canvas.addEventListener('click', (e) => {
     }
     ry += bh + 4;
   }
-  if (hitHud) { e.stopPropagation(); return; }
+  if (hitHud) { e.stopPropagation(); draw(); return; }
 
-  // Check island header click (select island)
+  // Check island click (select island — header or body)
   const world = mouseToWorld(e);
   const islandHit = hitIsland(world.x, world.y);
-  if (islandHit && islandHit.isHeader) {
+  if (islandHit) {
     selectedNetworkId = islandHit.net.id;
     if (statsPanelVisible) updateStatsPanel();
     draw();
-  } else if (!hitNode(world.x, world.y) && !islandHit) {
+  } else if (!hitNode(world.x, world.y)) {
     // Click on empty canvas — deselect island, clean view
     if (selectedNetworkId !== 'all') {
       selectedNetworkId = 'all';
