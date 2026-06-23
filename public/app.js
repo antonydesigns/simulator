@@ -123,12 +123,7 @@ function simTick() {
         const share = upwardHeadroom / totalHeadroom;
         const agcDelta = totalAgc * share;
         const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
-        // Anti-windup: skip if turbine hasn't tracked ≥70% of current offset
-        const currentOffset = gen.agcOffset || 0;
-        const progress = (gen.mw || 0) - (gen.baselineContract || 0);
-        const needsGuard = Math.abs(currentOffset) > 2;
-        const isTracking = !needsGuard || progress / currentOffset >= 0.7;
-        if (Math.abs(clamped) > 0.0001 && isTracking) {
+        if (Math.abs(clamped) > 0.0001) {
           gen.agcOffset = currentOffset + clamped;
         }
       }
@@ -1070,7 +1065,7 @@ function updateStatsPanel() {
     html += '<span><span class="gen-name">' + (gen.shortId || gen.id.slice(-4)) + '</span>' + tag + '</span>';
     html += '<span class="value">' + Math.round(gen.mw || 0) + ' MW</span>';
     html += '</div>';
-    const dev = (state.frequency - f0) / f0;
+    const dev = (state.frequency - 50) / 50;
     const govMod = -(1 / (gen.droop || 0.04)) * dev * (gen.rating || 100);
     const fcrHeadroom = gen.fcrHeadroom || 10;
     const fcrResponse = Math.max(-fcrHeadroom, Math.min(fcrHeadroom, govMod));
