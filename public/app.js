@@ -115,32 +115,31 @@ function simTick() {
     // --- Step 2: Storage FCR ---
     for (const st of storages) {
       st.mwResponse = 0;
+      const bc = st.baselineContract || 0;
+      const soc = st.mw || 0;
+      const cap = st.maxCapacity || 100;
+      const cr = st.chargeRate || 50;
+      const dr = st.dischargeRate || 50;
+      const maxDischargeP = soc / (dt / 3600); // can't discharge more than what's stored
+      const maxChargeP = (cap - soc) / (dt / 3600); // can't charge more than room left
+
       if (st.mode === 'balancing') {
         const droop = st.droop || 0.04;
-        const rating = st.maxCapacity || 100;
         const dev = (freq - f0) / f0;
-        const govMod = -(1 / droop) * dev * rating;
+        const govMod = -(1 / droop) * dev * (cap || 100);
         const headroom = st.fcrHeadroom || 10;
         let fcrResponse = Math.max(-headroom, Math.min(headroom, govMod));
-        const soc = st.mw || 0;
-        const cap = st.maxCapacity || 100;
-        const maxDischargeP = soc / (dt / 3600);
-        const maxChargeP = (cap - soc) / (dt / 3600);
-        fcrResponse = Math.max(-maxChargeP, Math.min(maxDischargeP, fcrResponse));
-        fcrResponse = Math.max(-(st.chargeRate || 50), Math.min(st.dischargeRate || 50, fcrResponse));
-        st.mwResponse = fcrResponse;
+        let target = bc + fcrResponse;
+        target = Math.max(-cr, Math.min(dr, target));
+        target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
+        st.mwResponse = target;
       } else if (st.mode === 'fixed') {
-        const target = st.fixedTarget || 0;
-        const soc = st.mw || 0;
-        const cap = st.maxCapacity || 100;
-        const maxDischargeP = soc / (dt / 3600);
-        const maxChargeP = (cap - soc) / (dt / 3600);
-        let out = Math.max(-(st.chargeRate || 50), Math.min(st.dischargeRate || 50, target));
-        out = Math.max(-maxChargeP, Math.min(maxDischargeP, out));
-        st.mwResponse = out;
+        let target = bc + (st.fixedTarget || 0);
+        target = Math.max(-cr, Math.min(dr, target));
+        target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
+        st.mwResponse = target;
       }
-      const cap = st.maxCapacity || 100;
-      st.mw = Math.max(0, Math.min(cap, (st.mw || 0) - st.mwResponse * dt / 3600));
+      st.mw = Math.max(0, Math.min(cap, soc - st.mwResponse * dt / 3600));
     }
 
     const totalStorage = storages.reduce((s, st) => s + (st.mwResponse || 0), 0);
@@ -372,6 +371,7 @@ function simTick() {
         entry.nodes[node.id].mwResponse = node.mwResponse || 0;
         entry.nodes[node.id].mode = node.mode || 'balancing';
         entry.nodes[node.id].maxCapacity = node.maxCapacity || 100;
+        entry.nodes[node.id].baselineContract = node.baselineContract || 0;
       }
     }
     // Capture connection states
@@ -421,6 +421,7 @@ function restartSim() {
     gen.freqTimer = 0;
   }
   for (const st of state.nodes.filter(n => n.type === 'storage')) {
+    st.baselineContract = 0;
     st.mwResponse = 0;
   }
   // Reset tripped lines
@@ -453,6 +454,9 @@ function balanceGrid() {
     gen.tripped = false;
     gen.freqTimer = 0;
   }
+  for (const st of state.nodes.filter(n => n.type === 'storage')) {
+    st.baselineContract = 0;
+  }
   for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
   for (const load of state.nodes.filter(n => n.type === 'load')) {
     load.shedPct = 0;
@@ -463,21 +467,46 @@ function balanceGrid() {
     const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
     const loads = netNodes.filter(n => n.type === 'load');
     const gens = netNodes.filter(n => n.type === 'generator');
-    if (!loads.length || !gens.length) continue;
+    const storages = netNodes.filter(n => n.type === 'storage');
+    if (!loads.length) continue;
 
     const totalDemand = loads.reduce((sum, n) => sum + (n.mw || 0), 0);
     const fixedGens = gens.filter(g => g.mode === 'fixed');
     const flexGens = gens.filter(g => g.mode !== 'fixed');
 
     const fixedSupply = fixedGens.reduce((sum, g) => sum + Math.min(g.dispatchTarget || 0, g.rating || Infinity), 0);
-    const remaining = Math.max(0, totalDemand - fixedSupply);
-    const totalRating = flexGens.reduce((sum, g) => sum + (g.rating || 100), 0);
+    let remaining = totalDemand - fixedSupply;
 
-    if (totalRating > 0 && remaining > 0) {
+    // Distribute to flexible gens
+    const flexGenRating = flexGens.reduce((sum, g) => sum + (g.rating || 100), 0);
+    if (flexGenRating > 0 && remaining > 0) {
       for (const gen of flexGens) {
-        const share = (gen.rating || 100) / totalRating;
+        const share = (gen.rating || 100) / flexGenRating;
         gen.baselineContract = Math.min(Math.round(remaining * share * 10) / 10, gen.rating || Infinity);
         gen.mw = gen.baselineContract;
+      }
+    }
+
+    // Cover remaining deficit or surplus with storage
+    remaining = totalDemand - fixedSupply - flexGens.reduce((s, g) => s + (g.baselineContract || 0), 0);
+    const notFixedStor = storages.filter(s => s.mode !== 'idle');
+    if (notFixedStor.length > 0) {
+      if (remaining > 0) {
+        // Deficit: discharge storage to cover gap
+        const totalRate = notFixedStor.reduce((s, st) => s + (st.dischargeRate || 50), 0);
+        for (const st of notFixedStor) {
+          const dr = st.dischargeRate || 50;
+          st.baselineContract = Math.min(Math.round(remaining * (dr / totalRate) * 10) / 10, dr);
+          if (st.mw !== undefined && st.mw < st.baselineContract * 0.05) st.baselineContract = 0;
+        }
+      } else if (remaining < 0) {
+        // Surplus: charge storage to absorb excess
+        const surplus = -remaining;
+        const totalRate = notFixedStor.reduce((s, st) => s + (st.chargeRate || 50), 0);
+        for (const st of notFixedStor) {
+          const cr = st.chargeRate || 50;
+          st.baselineContract = -Math.min(Math.round(surplus * (cr / totalRate) * 10) / 10, cr);
+        }
       }
     }
   }
@@ -1218,7 +1247,7 @@ function addNode(type, wx, wy) {
   } else if (type === 'generator') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, tripped: false, freqTimer: 0 };
   } else if (type === 'storage') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 50, dischargeRate: 50, maxCapacity: 100, mode: 'balancing', fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 50, dischargeRate: 50, maxCapacity: 100, mode: 'balancing', baselineContract: 0, fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0 };
   } else {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0 };
   }
@@ -1342,6 +1371,7 @@ async function load() {
         if (n.chargeRate === undefined) n.chargeRate = 50;
         if (n.dischargeRate === undefined) n.dischargeRate = 50;
         if (n.maxCapacity === undefined) n.maxCapacity = 100;
+        if (n.baselineContract === undefined) n.baselineContract = 0;
         if (n.mode === undefined) n.mode = 'balancing';
         if (n.fcrHeadroom === undefined) n.fcrHeadroom = 10;
         if (n.droop === undefined) n.droop = 0.04;
@@ -1717,6 +1747,7 @@ document.addEventListener('keydown', (e) => {
       const fresh = { ...n, id: newId, x: n.x + offset, y: n.y + offset, shortId: shortId(n.type) };
       if (fresh.type === 'generator') { fresh.tripped = false; fresh.freqTimer = 0; }
       if (fresh.type === 'load') { fresh.shedPct = 0; fresh.baseMw = fresh.mw || 10; }
+      if (fresh.type === 'storage') { fresh.mwResponse = 0; }
       pasted.push(fresh);
     }
     state.nodes.push(...pasted);
@@ -1945,6 +1976,7 @@ function openSettings(nodeId) {
           </div>
         </div>
         <div class="storage-fcr-group">
+          <div class="settings-row"><label class="settings-label">Dispatch</label><div class="settings-slider-group"><input type="range" class="baseline-contract-slider" min="${-chgR}" max="${dchgR}" step="1" value="${node.baselineContract || 0}"><span class="baseline-contract-value">${(node.baselineContract || 0) >= 0 ? '+' : ''}${node.baselineContract || 0} MW</span></div></div>
           <div class="settings-row"><label class="settings-label">FCR Headroom</label><div class="settings-slider-group"><input type="range" class="fcr-headroom-slider" min="1" max="${Math.max(chgR, dchgR)}" step="1" value="${fcr}"><span class="fcr-headroom-value">${fcr} MW</span></div></div>
           <div class="settings-row"><label class="settings-label">Droop</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="0.5" max="20" step="0.5" value="${drop}"><span class="droop-value">${drop}%</span></div></div>
         </div>
@@ -1972,6 +2004,16 @@ function openSettings(nodeId) {
     const socSlider = panel.querySelector('.soc-slider');
     socSlider.addEventListener('input', () => { const v = parseFloat(socSlider.value); node.mw = Math.min(v, node.maxCapacity || 100); entry.socEl.textContent = v.toFixed(2) + ' MWh'; });
     socSlider.addEventListener('change', () => persist());
+
+    // Baseline contract (dispatch) slider
+    const bcSlider = panel.querySelector('.baseline-contract-slider');
+    const bcVal = panel.querySelector('.baseline-contract-value');
+    bcSlider.addEventListener('input', () => {
+      const v = parseInt(bcSlider.value, 10);
+      bcVal.textContent = (v >= 0 ? '+' : '') + v + ' MW';
+      node.baselineContract = v;
+    });
+    bcSlider.addEventListener('change', () => persist());
 
     // Mode select
     entry.modeSelect.addEventListener('change', () => {
