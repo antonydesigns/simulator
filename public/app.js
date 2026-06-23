@@ -68,32 +68,50 @@ function simTick() {
   const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
   const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
 
-  // --- Step 2: Storage acts before frequency (it's part of the grid) ---
-  // Charging = consuming power, discharging = supplying power
-  let netStorage = 0; // + when discharging (supplying grid), - when charging (consuming)
-  let surplus = totalGen - totalLoad;
+  // --- Step 2: Storage frequency response (FCR via droop) ---
+  // Storage acts instantly (no turbine lag). Clamped by SoC and rate limits.
+  for (const st of storages) {
+    st.mwResponse = 0;
 
-  if (storages.length > 0 && Math.abs(surplus) > 0.001) {
-    for (const st of storages) {
-      if (surplus > 0) {
-        const rate = (st.chargeRate || 5);
-        const maxC = rate * dt;
-        const capLeft = (st.maxCapacity || 100) - (st.mw || 0);
-        const a = Math.min(maxC, surplus, capLeft);
-        if (a > 0.001) { st.mw = (st.mw || 0) + a; surplus -= a; netStorage -= a; }
-      } else {
-        const rate = (st.dischargeRate || 5);
-        const maxD = rate * dt;
-        const avail = st.mw || 0;
-        const need = -surplus;
-        const a = Math.min(maxD, need, avail);
-        if (a > 0.001) { st.mw = (st.mw || 0) - a; surplus += a; netStorage += a; }
-      }
+    if (st.mode === 'balancing') {
+      const droop = st.droop || 0.04;
+      const rating = st.maxCapacity || 100;
+      const dev = (state.frequency - f0) / f0;
+      const govMod = -(1 / droop) * dev * rating;
+      const headroom = st.fcrHeadroom || 10;
+      let fcrResponse = Math.max(-headroom, Math.min(headroom, govMod));
+
+      // SoC clamp: can't discharge what you don't have, can't charge what you can't store
+      const soc = st.mw || 0;
+      const cap = st.maxCapacity || 100;
+      const maxDischargeP = soc / (dt / 3600);
+      const maxChargeP = (cap - soc) / (dt / 3600);
+      fcrResponse = Math.max(-maxChargeP, Math.min(maxDischargeP, fcrResponse));
+
+      // Rate clamp
+      fcrResponse = Math.max(-(st.chargeRate || 50), Math.min(st.dischargeRate || 50, fcrResponse));
+      st.mwResponse = fcrResponse;
+
+    } else if (st.mode === 'fixed') {
+      const target = st.fixedTarget || 0;
+      const soc = st.mw || 0;
+      const cap = st.maxCapacity || 100;
+      const maxDischargeP = soc / (dt / 3600);
+      const maxChargeP = (cap - soc) / (dt / 3600);
+      let out = Math.max(-(st.chargeRate || 50), Math.min(st.dischargeRate || 50, target));
+      out = Math.max(-maxChargeP, Math.min(maxDischargeP, out));
+      st.mwResponse = out;
     }
+    // idle → mwResponse stays 0
+
+    // Update state of charge (MWh) — dt/3600 converts MW·s to MWh
+    const cap = st.maxCapacity || 100;
+    st.mw = Math.max(0, Math.min(cap, (st.mw || 0) - st.mwResponse * dt / 3600));
   }
 
   // --- Step 3: Frequency from FULL grid balance (gens + storage - loads) ---
-  const imbalance = totalGen + netStorage - totalLoad;
+  const totalStorage = storages.reduce((s, st) => s + (st.mwResponse || 0), 0);
+  const imbalance = totalGen + totalStorage - totalLoad;
 
   let totalInertiaEnergy = 0;
   for (const gen of gens) totalInertiaEnergy += (gen.inertia || 5) * (gen.rating || 100);
@@ -152,6 +170,26 @@ function simTick() {
     if (st) {
       const entry = openPanels[nodeId];
       if (entry.socEl) entry.socEl.textContent = Math.round(st.mw || 0) + ' MWh';
+      if (entry.mwRespEl) entry.mwRespEl.textContent = (st.mwResponse || 0) >= 0
+        ? '+' + Math.round(st.mwResponse || 0) + ' MW'
+        : Math.round(st.mwResponse || 0) + ' MW';
+      if (entry.modeSelect) entry.modeSelect.value = st.mode || 'balancing';
+      if (entry.fcrGroup) entry.fcrGroup.style.display = (st.mode === 'balancing') ? '' : 'none';
+      if (entry.fixedGroup) entry.fixedGroup.style.display = (st.mode === 'fixed') ? '' : 'none';
+      if (entry.fcrSlider && entry.fcrVal) {
+        entry.fcrSlider.value = st.fcrHeadroom || 10;
+        entry.fcrVal.textContent = Math.round(st.fcrHeadroom || 10) + ' MW';
+      }
+      if (entry.droopSlider && entry.droopVal) {
+        entry.droopSlider.value = (st.droop || 0.04) * 100;
+        entry.droopVal.textContent = Math.round((st.droop || 0.04) * 100) + '%';
+      }
+      if (entry.fixedSlider && entry.fixedVal) {
+        entry.fixedSlider.value = st.fixedTarget || 0;
+        entry.fixedVal.textContent = (st.fixedTarget || 0) >= 0
+          ? '+' + Math.round(st.fixedTarget || 0) + ' MW'
+          : Math.round(st.fixedTarget || 0) + ' MW';
+      }
     }
   }
 
@@ -192,6 +230,11 @@ function simTick() {
         entry.nodes[node.id].afrrMax = node.afrrMax !== undefined ? node.afrrMax : (node.rating || 100);
         entry.nodes[node.id].turbineTimeConstant = node.turbineTimeConstant || 1;
       }
+      if (node.type === 'storage') {
+        entry.nodes[node.id].mwResponse = node.mwResponse || 0;
+        entry.nodes[node.id].mode = node.mode || 'balancing';
+        entry.nodes[node.id].maxCapacity = node.maxCapacity || 100;
+      }
     }
     sim.dataBuffer.push(entry);
   }
@@ -218,6 +261,9 @@ function restartSim() {
   for (const gen of state.nodes.filter(n => n.type === 'generator')) {
     gen.agcOffset = 0;
     gen.mw = gen.baselineContract || 0;
+  }
+  for (const st of state.nodes.filter(n => n.type === 'storage')) {
+    st.mwResponse = 0;
   }
   state.frequency = 50;
   draw();
@@ -401,8 +447,14 @@ function drawNodes() {
       ctx.fillStyle = '#8a867e';
       ctx.font = `${ms}px -apple-system, BlinkMacSystemFont, sans-serif`;
       ctx.textBaseline = 'top';
-      const suffix = node.type === 'storage' ? 'MWh' : 'MW';
-      ctx.fillText(Math.round(node.mw) + suffix, p.x, p.y + r + 4 + ls + 2);
+      if (node.type === 'storage') {
+        const mwResp = node.mwResponse || 0;
+        const pw = mwResp >= 0 ? '+' : '';
+        ctx.fillText(pw + Math.round(mwResp) + ' MW', p.x, p.y + r + 4 + ls + 2);
+        ctx.fillText(Math.round(node.mw) + ' MWh', p.x, p.y + r + 4 + ls * 2 + 4);
+      } else {
+        ctx.fillText(Math.round(node.mw) + ' MW', p.x, p.y + r + 4 + ls + 2);
+      }
     }
   }
 }
@@ -550,7 +602,7 @@ function addNode(type, wx, wy) {
   } else if (type === 'generator') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, agcOffset: 0 };
   } else if (type === 'storage') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, chargeRate: 5, dischargeRate: 5, maxCapacity: 100 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 50, dischargeRate: 50, maxCapacity: 100, mode: 'balancing', fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0 };
   } else {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0 };
   }
@@ -645,9 +697,15 @@ async function load() {
         if (!n.shortId) n.shortId = shortId(n.type);
       }
       if (n.type === 'storage') {
-        if (n.chargeRate === undefined) n.chargeRate = 5;
-        if (n.dischargeRate === undefined) n.dischargeRate = 5;
+        if (n.chargeRate === undefined) n.chargeRate = 50;
+        if (n.dischargeRate === undefined) n.dischargeRate = 50;
         if (n.maxCapacity === undefined) n.maxCapacity = 100;
+        if (n.mode === undefined) n.mode = 'balancing';
+        if (n.fcrHeadroom === undefined) n.fcrHeadroom = 10;
+        if (n.droop === undefined) n.droop = 0.04;
+        if (n.fixedTarget === undefined) n.fixedTarget = 0;
+        // Assign shortId if missing
+        if (!n.shortId) n.shortId = shortId(n.type);
       }
     }
   } catch (e) { console.error('Load failed:', e); }
@@ -961,29 +1019,99 @@ function openSettings(nodeId) {
     }
 
   } else if (node.type === 'storage') {
+    const socVal = Math.round(node.mw || 0);
+    const chgR = node.chargeRate || 50;
+    const dchgR = node.dischargeRate || 50;
+    const cap = node.maxCapacity || 100;
+    const fcr = node.fcrHeadroom || 10;
+    const drop = Math.round((node.droop || 0.04) * 100);
+    const ft = node.fixedTarget || 0;
+    const mode = node.mode || 'balancing';
+
     panel.innerHTML = `
       <div class="settings-header"><span class="settings-title">Storage ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
-        <div class="settings-row"><label class="settings-label">State of Charge</label><div class="settings-value-display storage-soc">${Math.round(node.mw || 0)} MWh</div></div>
-        <div class="settings-row"><label class="settings-label">Charge Rate (MW)</label><div class="settings-slider-group"><input type="range" class="charge-slider" min="1" max="50" step="1" value="${node.chargeRate || 5}"><span class="charge-value">${node.chargeRate || 5}</span></div></div>
-        <div class="settings-row"><label class="settings-label">Discharge Rate (MW)</label><div class="settings-slider-group"><input type="range" class="discharge-slider" min="1" max="50" step="1" value="${node.dischargeRate || 5}"><span class="discharge-value">${node.dischargeRate || 5}</span></div></div>
-        <div class="settings-row"><label class="settings-label">Max Capacity (MWh)</label><div class="settings-slider-group"><input type="range" class="capacity-slider" min="10" max="500" step="10" value="${node.maxCapacity || 100}"><span class="capacity-value">${node.maxCapacity || 100}</span></div></div>
+        <div class="settings-row"><label class="settings-label">State of Charge</label><div class="settings-slider-group"><input type="range" class="soc-slider" min="0" max="${cap}" step="1" value="${socVal}"><span class="settings-value-display storage-soc">${socVal} MWh</span></div></div>
+        <div class="settings-row"><label class="settings-label">Power</label><div class="settings-value-display storage-mw-response">0 MW</div></div>
+        <div class="settings-row sep-top"><label class="settings-label">Mode</label>
+          <div class="settings-slider-group">
+            <select class="storage-mode-select">
+              <option value="balancing" ${mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + droop)</option>
+              <option value="fixed" ${mode === 'fixed' ? 'selected' : ''}>Fixed (setpoint)</option>
+              <option value="idle" ${mode === 'idle' ? 'selected' : ''}>Idle</option>
+            </select>
+          </div>
+        </div>
+        <div class="storage-fcr-group">
+          <div class="settings-row"><label class="settings-label">FCR Headroom</label><div class="settings-slider-group"><input type="range" class="fcr-headroom-slider" min="1" max="${Math.max(chgR, dchgR)}" step="1" value="${fcr}"><span class="fcr-headroom-value">${fcr} MW</span></div></div>
+          <div class="settings-row"><label class="settings-label">Droop</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="0.5" max="20" step="0.5" value="${drop}"><span class="droop-value">${drop}%</span></div></div>
+        </div>
+        <div class="storage-fixed-group" style="display:${mode === 'fixed' ? '' : 'none'}">
+          <div class="settings-row"><label class="settings-label">Target</label><div class="settings-slider-group"><input type="range" class="fixed-target-slider" min="${-chgR}" max="${dchgR}" step="1" value="${ft}"><span class="fixed-target-value">${ft >= 0 ? '+' : ''}${ft} MW</span></div></div>
+        </div>
+        <div class="settings-row sep-top"><label class="settings-label">Charge Rate</label><div class="settings-slider-group"><input type="range" class="charge-slider" min="1" max="200" step="1" value="${chgR}"><span class="charge-value">${chgR} MW</span></div></div>
+        <div class="settings-row"><label class="settings-label">Discharge Rate</label><div class="settings-slider-group"><input type="range" class="discharge-slider" min="1" max="200" step="1" value="${dchgR}"><span class="discharge-value">${dchgR} MW</span></div></div>
+        <div class="settings-row"><label class="settings-label">Max Capacity</label><div class="settings-slider-group"><input type="range" class="capacity-slider" min="10" max="1000" step="10" value="${cap}"><span class="capacity-value">${cap} MWh</span></div></div>
       </div>
       <div class="settings-resize-handle"></div>`;
 
     entry.socEl = panel.querySelector('.storage-soc');
+    entry.mwRespEl = panel.querySelector('.storage-mw-response');
+    entry.modeSelect = panel.querySelector('.storage-mode-select');
+    entry.fcrGroup = panel.querySelector('.storage-fcr-group');
+    entry.fixedGroup = panel.querySelector('.storage-fixed-group');
 
+    // SoC slider
+    const socSlider = panel.querySelector('.soc-slider');
+    socSlider.addEventListener('input', () => { const v = parseInt(socSlider.value, 10); node.mw = Math.min(v, node.maxCapacity || 100); entry.socEl.textContent = v + ' MWh'; });
+    socSlider.addEventListener('change', () => persist());
+
+    // Mode select
+    entry.modeSelect.addEventListener('change', () => {
+      node.mode = entry.modeSelect.value;
+      entry.fcrGroup.style.display = node.mode === 'balancing' ? '' : 'none';
+      entry.fixedGroup.style.display = node.mode === 'fixed' ? '' : 'none';
+      persist();
+    });
+
+    // FCR headroom slider
+    const fcrSlider = panel.querySelector('.fcr-headroom-slider');
+    const fcrVal = panel.querySelector('.fcr-headroom-value');
+    entry.fcrSlider = fcrSlider;
+    entry.fcrVal = fcrVal;
+    fcrSlider.addEventListener('input', () => { const v = parseInt(fcrSlider.value, 10); fcrVal.textContent = v + ' MW'; node.fcrHeadroom = v; });
+    fcrSlider.addEventListener('change', () => persist());
+
+    // Droop slider
+    const droopSlider = panel.querySelector('.droop-slider');
+    const droopVal = panel.querySelector('.droop-value');
+    entry.droopSlider = droopSlider;
+    entry.droopVal = droopVal;
+    droopSlider.addEventListener('input', () => { const v = parseFloat(droopSlider.value); droopVal.textContent = v + '%'; node.droop = v / 100; });
+    droopSlider.addEventListener('change', () => persist());
+
+    // Fixed target slider
+    const fixedSlider = panel.querySelector('.fixed-target-slider');
+    const fixedVal = panel.querySelector('.fixed-target-value');
+    entry.fixedSlider = fixedSlider;
+    entry.fixedVal = fixedVal;
+    fixedSlider.addEventListener('input', () => { const v = parseInt(fixedSlider.value, 10); fixedVal.textContent = (v >= 0 ? '+' : '') + v + ' MW'; node.fixedTarget = v; });
+    fixedSlider.addEventListener('change', () => persist());
+
+    // Charge rate slider
     const chg = panel.querySelector('.charge-slider'), chgV = panel.querySelector('.charge-value');
-    chg.addEventListener('input', () => { const v = parseInt(chg.value, 10); chgV.textContent = v; node.chargeRate = v; });
+    chg.addEventListener('input', () => { const v = parseInt(chg.value, 10); chgV.textContent = v + ' MW'; node.chargeRate = v; fixedSlider.min = -v; });
     chg.addEventListener('change', () => persist());
 
+    // Discharge rate slider
     const dchg = panel.querySelector('.discharge-slider'), dchgV = panel.querySelector('.discharge-value');
-    dchg.addEventListener('input', () => { const v = parseInt(dchg.value, 10); dchgV.textContent = v; node.dischargeRate = v; });
+    dchg.addEventListener('input', () => { const v = parseInt(dchg.value, 10); dchgV.textContent = v + ' MW'; node.dischargeRate = v; fixedSlider.max = v; });
     dchg.addEventListener('change', () => persist());
 
-    const cap = panel.querySelector('.capacity-slider'), capV = panel.querySelector('.capacity-value');
-    cap.addEventListener('input', () => { const v = parseInt(cap.value, 10); capV.textContent = v; node.maxCapacity = v; if (node.mw > v) node.mw = v; });
-    cap.addEventListener('change', () => persist());
+    // Capacity slider
+    const capSlider = panel.querySelector('.capacity-slider'), capV = panel.querySelector('.capacity-value');
+    capSlider.addEventListener('input', () => { const v = parseInt(capSlider.value, 10); capV.textContent = v + ' MWh'; node.maxCapacity = v; if (node.mw > v) { node.mw = v; entry.socEl.textContent = v + ' MWh'; socSlider.max = v; } });
+    capSlider.addEventListener('change', () => persist());
 
   } else {
     panel.innerHTML = `
@@ -1057,7 +1185,7 @@ function updateStatsPanel() {
   const storages = state.nodes.filter(n => n.type === 'storage');
   const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
   const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
-  const totalStor = storages.reduce((s, st) => s + (st.mw || 0), 0);
+  const totalStor = storages.reduce((s, st) => s + (st.mwResponse || 0), 0);
   const netImbalance = totalGen + totalStor - totalLoad;
 
   let html = '';
@@ -1100,8 +1228,11 @@ function updateStatsPanel() {
     html += '<div class="stats-section">';
     html += '<div class="stats-section-title">🔋 Storage</div>';
     for (const st of storages) {
-      const dir = (st.mw || 0) >= 0 ? 'charging' : 'discharging';
-      html += '<div class="stats-row"><span>' + (st.shortId || st.id.slice(-4)) + ' (' + dir + ')</span><span class="value">' + Math.round(Math.abs(st.mw || 0)) + ' MW</span></div>';
+      const tag = st.mode === 'fixed' ? ' 🔒' : (st.mode === 'idle' ? ' 💤' : '');
+      const mw = st.mwResponse || 0;
+      const dir = mw > 0.5 ? 'discharge' : (mw < -0.5 ? 'charge' : 'idle');
+      html += '<div class="stats-row"><span>' + (st.shortId || st.id.slice(-4)) + tag + ' (' + dir + ')</span><span class="value">' + (mw >= 0 ? '+' : '') + Math.round(mw) + ' MW</span></div>';
+      html += '<div style="padding-left:12px;font-size:12px;color:#999;">SoC: ' + Math.round(st.mw || 0) + '/' + Math.round(st.maxCapacity || 100) + ' MWh</div>';
     }
     html += '<div class="stats-row total"><span>Net storage</span><span class="value">' + (totalStor >= 0 ? '+' : '') + Math.round(totalStor) + ' MW</span></div>';
     html += '</div>';
