@@ -1951,8 +1951,13 @@ function openSettings(nodeId) {
         <div class="storage-fixed-group" style="display:${mode === 'fixed' ? '' : 'none'}">
           <div class="settings-row"><label class="settings-label">Target</label><div class="settings-slider-group"><input type="range" class="fixed-target-slider" min="${-chgR}" max="${dchgR}" step="1" value="${ft}"><span class="fixed-target-value">${ft >= 0 ? '+' : ''}${ft} MW</span></div></div>
         </div>
-        <div class="settings-row sep-top"><label class="settings-label">Charge Rate</label><div class="settings-slider-group"><input type="range" class="charge-slider" min="1" max="200" step="1" value="${chgR}"><span class="charge-value">${chgR} MW</span></div></div>
-        <div class="settings-row"><label class="settings-label">Discharge Rate</label><div class="settings-slider-group"><input type="range" class="discharge-slider" min="1" max="200" step="1" value="${dchgR}"><span class="discharge-value">${dchgR} MW</span></div></div>
+        <div class="settings-row sep-top"><label class="settings-label">Power Limits</label>
+          <div class="settings-slider-group dual-range-wrap">
+            <input type="range" class="charge-slider" min="1" max="200" step="1" value="${chgR}">
+            <input type="range" class="discharge-slider" min="1" max="200" step="1" value="${dchgR}">
+            <span class="dual-range-labels"><span class="charge-label">${chgR} MW</span><span class="range-sep">↔</span><span class="discharge-label">${dchgR} MW</span></span>
+          </div>
+        </div>
         <div class="settings-row"><label class="settings-label">Max Capacity</label><div class="settings-slider-group"><input type="range" class="capacity-slider" min="10" max="1000" step="10" value="${cap}"><span class="capacity-value">${cap} MWh</span></div></div>
       </div>
       <div class="settings-resize-handle"></div>`;
@@ -2000,14 +2005,22 @@ function openSettings(nodeId) {
     fixedSlider.addEventListener('input', () => { const v = parseInt(fixedSlider.value, 10); fixedVal.textContent = (v >= 0 ? '+' : '') + v + ' MW'; node.fixedTarget = v; });
     fixedSlider.addEventListener('change', () => persist());
 
-    // Charge rate slider
-    const chg = panel.querySelector('.charge-slider'), chgV = panel.querySelector('.charge-value');
-    chg.addEventListener('input', () => { const v = parseInt(chg.value, 10); chgV.textContent = v + ' MW'; node.chargeRate = v; fixedSlider.min = -v; });
+    // Charge/discharge dual-range sliders
+    const chg = panel.querySelector('.charge-slider'), dchg = panel.querySelector('.discharge-slider');
+    const clbl = panel.querySelector('.charge-label'), dlbl = panel.querySelector('.discharge-label');
+    chg.addEventListener('input', () => {
+      const cv = parseInt(chg.value, 10), dv = parseInt(dchg.value, 10);
+      if (cv > dv) chg.value = dv;
+      const v = parseInt(chg.value, 10);
+      clbl.textContent = v + ' MW'; node.chargeRate = v; fixedSlider.min = -v;
+    });
     chg.addEventListener('change', () => persist());
-
-    // Discharge rate slider
-    const dchg = panel.querySelector('.discharge-slider'), dchgV = panel.querySelector('.discharge-value');
-    dchg.addEventListener('input', () => { const v = parseInt(dchg.value, 10); dchgV.textContent = v + ' MW'; node.dischargeRate = v; fixedSlider.max = v; });
+    dchg.addEventListener('input', () => {
+      const cv = parseInt(chg.value, 10), dv = parseInt(dchg.value, 10);
+      if (dv < cv) dchg.value = cv;
+      const v = parseInt(dchg.value, 10);
+      dlbl.textContent = v + ' MW'; node.dischargeRate = v; fixedSlider.max = v;
+    });
     dchg.addEventListener('change', () => persist());
 
     // Capacity slider
