@@ -1069,7 +1069,7 @@ function addConnection(sourceId, targetId) {
 // ─── Split Connection ──────────────────────────────────────────────────
 
 function splitConnection(conn, wx, wy) {
-  const j = { id: uid(), type: 'junction', x: wx, y: wy, label: '', mw: 0 };
+  const j = { id: uid(), type: 'junction', x: wx, y: wy, shortId: shortId('junction'), label: '', mw: 0 };
   state.nodes.push(j);
   state.connections = state.connections.filter(c => c !== conn);
   const halfX = (conn.reactance || 0.1) / 2;
