@@ -296,6 +296,11 @@ function simTick() {
             const minStAgc = -(cr + bc - (st.fcrHeadroom || 10));
             st.agcOffset = Math.max(minStAgc, Math.min(maxStAgc, st.agcOffset));
           }
+          // Energy-neutral washout: decay AGC offset toward 0 when freq is stable
+          if (st.energyNeutral && Math.abs(freqErr) < 0.01) {
+            st.agcOffset = (st.agcOffset || 0) * Math.exp(-dt / 60);
+            if (Math.abs(st.agcOffset) < 0.001) st.agcOffset = 0;
+          }
         }
       }
     }
@@ -353,6 +358,7 @@ function simTick() {
       if (entry.modeSelect) entry.modeSelect.value = st.mode || 'balancing';
       if (entry.fcrGroup) entry.fcrGroup.style.display = (st.mode === 'balancing' || st.mode === 'fcr-only') ? '' : 'none';
       if (entry.fixedGroup) entry.fixedGroup.style.display = (st.mode === 'fixed') ? '' : 'none';
+      if (entry.neutralGroup) entry.neutralGroup.style.display = st.mode === 'balancing' ? '' : 'none';
       if (entry.fcrSlider && entry.fcrVal) {
         entry.fcrSlider.value = st.fcrHeadroom || 10;
         entry.fcrVal.textContent = Math.round(st.fcrHeadroom || 10) + ' MW';
@@ -2053,6 +2059,17 @@ function openSettings(nodeId) {
           <div class="settings-row"><label class="settings-label">FCR Headroom</label><div class="settings-slider-group"><input type="range" class="fcr-headroom-slider" min="1" max="${Math.max(chgR, dchgR)}" step="1" value="${fcr}"><span class="fcr-headroom-value">${fcr} MW</span></div></div>
           <div class="settings-row"><label class="settings-label">Droop</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="0.5" max="20" step="0.5" value="${drop}"><span class="droop-value">${drop}%</span></div></div>
         </div>
+        <div class="storage-neutral-group" style="display:${mode === 'balancing' ? '' : 'none'}">
+          <div class="settings-row" title="When enabled, AGC offset slowly decays to zero after frequency stabilizes (~60s). Prevents SoC drift and frees headroom by letting other units absorb the imbalance. Only active in Balancing mode.">
+            <label class="settings-label" style="font-size:11px">Energy-Neutrality ⓘ</label>
+            <div class="settings-slider-group">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font-size:12px;color:#aaa">
+                <input type="checkbox" class="energy-neutral-checkbox" ${node.energyNeutral ? 'checked' : ''}>
+                <span>return to baseline after disturbance</span>
+              </label>
+            </div>
+          </div>
+        </div>
         <div class="storage-fixed-group" style="display:${mode === 'fixed' ? '' : 'none'}">
           <div class="settings-row"><label class="settings-label">Target</label><div class="settings-slider-group"><input type="range" class="fixed-target-slider" min="${-chgR}" max="${dchgR}" step="1" value="${ft}"><span class="fixed-target-value">${ft >= 0 ? '+' : ''}${ft} MW</span></div></div>
         </div>
@@ -2095,10 +2112,18 @@ function openSettings(nodeId) {
     entry.bcVal = bcVal;
 
     // Mode select
+    entry.neutralGroup = panel.querySelector('.storage-neutral-group');
+    const neutralCb = panel.querySelector('.energy-neutral-checkbox');
+    neutralCb.addEventListener('change', () => {
+      node.energyNeutral = neutralCb.checked;
+      persist();
+    });
+
     entry.modeSelect.addEventListener('change', () => {
       node.mode = entry.modeSelect.value;
       entry.fcrGroup.style.display = (node.mode === 'balancing' || node.mode === 'fcr-only') ? '' : 'none';
       entry.fixedGroup.style.display = node.mode === 'fixed' ? '' : 'none';
+      if (entry.neutralGroup) entry.neutralGroup.style.display = node.mode === 'balancing' ? '' : 'none';
       persist();
     });
 
