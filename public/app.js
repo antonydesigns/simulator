@@ -436,6 +436,16 @@ function drawConnections() {
     if (!sameNet) ctx.setLineDash([4, 4]);
     ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
     ctx.setLineDash([]);
+
+    // Draw thermal limit label at midpoint
+    if (state.view.scale > 0.5) {
+      const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
+      const limit = c.thermalLimit || 100;
+      ctx.fillStyle = '#999';
+      ctx.font = '9px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillText(limit + ' MW', mx, my - 2);
+    }
   }
 }
 
@@ -957,9 +967,11 @@ function showMenu(e, nodeHit) {
   const world = mouseToWorld(e);
   menu.dataset.wx = world.x; menu.dataset.wy = world.y;
   menu.dataset.nodeId = nodeHit ? nodeHit.id : '';
+  menu.dataset.connId = '';
   menuItems.innerHTML = '';
 
   const islandHit = nodeHit ? null : hitIsland(world.x, world.y);
+  const lineHit = (!nodeHit && !islandHit) ? findNearestLine(world.x, world.y, 15 / state.view.scale) : null;
 
   if (nodeHit && nodeHit.type !== 'junction') {
     addMenuItem('Open settings', 'open-settings');
@@ -967,8 +979,12 @@ function showMenu(e, nodeHit) {
     addMenuItem('Delete', 'delete-node');
   } else if (nodeHit) {
     addMenuItem('Delete', 'delete-node');
+  } else if (lineHit) {
+    menu.dataset.connId = lineHit.conn.id;
+    addMenuItem('Line settings', 'line-settings');
+    addMenuSeparator();
+    addMenuItem('Delete line', 'delete-line');
   } else if (islandHit) {
-    // Island context menu
     menu.dataset.netId = islandHit.net.id;
     addMenuItem('+ Generator', 'add-generator');
     addMenuItem('+ Load', 'add-load');
@@ -978,7 +994,6 @@ function showMenu(e, nodeHit) {
     addMenuSeparator();
     addMenuItem('Rename island', 'rename-island');
   } else {
-    // Empty canvas
     addMenuItem('+ Generator', 'add-generator');
     addMenuItem('+ Load', 'add-load');
     addMenuItem('+ Storage', 'add-storage');
@@ -1135,13 +1150,19 @@ menu.addEventListener('click', (e) => {
   if (!item) return;
   const a = item.dataset.action, wx = parseFloat(menu.dataset.wx), wy = parseFloat(menu.dataset.wy), id = menu.dataset.nodeId;
   const netId = menu.dataset.netId;
+  const connId = menu.dataset.connId;
   if (a === 'add-generator') addNode('generator', wx, wy);
   else if (a === 'add-load') addNode('load', wx, wy);
   else if (a === 'add-storage') addNode('storage', wx, wy);
   else if (a === 'add-junction') addNode('junction', wx, wy);
   else if (a === 'open-settings') openSettings(id);
   else if (a === 'delete-node' && id) deleteNode(id);
-  else if (a === 'rename-island' && netId) {
+  else if (a === 'delete-line' && connId) {
+    state.connections = state.connections.filter(c => c.id !== connId);
+    recomputeNetworks(); persist(); draw();
+  } else if (a === 'line-settings' && connId) {
+    openLineSettings(connId);
+  } else if (a === 'rename-island' && netId) {
     const net = (state.networks || []).find(n => n.id === netId);
     if (net) {
       const name = prompt('Rename island:', net.customName || net.id);
@@ -1505,6 +1526,82 @@ function openSettings(nodeId) {
 }
 
 function closeSettings(nodeId) { if (openPanels[nodeId]) { openPanels[nodeId].panel.remove(); delete openPanels[nodeId]; } }
+
+function openLineSettings(connId) {
+  const conn = state.connections.find(c => c.id === connId);
+  if (!conn) return;
+  // Close existing line settings
+  if (openPanels['_line_' + connId]) { openPanels['_line_' + connId].panel.style.zIndex = Date.now(); return; }
+
+  const panel = document.createElement('div');
+  panel.className = 'settings-panel'; panel.style.zIndex = Date.now();
+  panel.dataset.nodeId = '_line_' + connId;
+  const src = state.nodes.find(n => n.id === conn.sourceId);
+  const tgt = state.nodes.find(n => n.id === conn.targetId);
+  const tag = (src ? (src.shortId || src.id.slice(-4)) : '?') + ' → ' + (tgt ? (tgt.shortId || tgt.id.slice(-4)) : '?');
+
+  const x = (conn.reactance || 0.1);
+  const t = conn.thermalLimit || 100;
+
+  panel.innerHTML = `
+    <div class="settings-header"><span class="settings-title">Line ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
+    <div class="settings-body">
+      <div class="settings-row"><label class="settings-label">Reactance (p.u.)</label>
+        <div class="settings-slider-group">
+          <input type="range" min="0.001" max="1" step="0.001" value="${x}">
+          <span class="settings-value-display">${x.toFixed(3)}</span>
+        </div>
+      </div>
+      <div class="settings-row"><label class="settings-label">Thermal Limit (MW)</label>
+        <div class="settings-slider-group">
+          <input type="range" min="1" max="500" step="1" value="${t}">
+          <span class="settings-value-display">${t} MW</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(panel);
+  panel.style.left = Math.min(window.innerWidth - 240, Math.max(10, (window.innerWidth - 220) / 2)) + 'px';
+  panel.style.top = Math.min(window.innerHeight - 200, Math.max(10, 80)) + 'px';
+
+  const entry = { panel };
+  const xSlider = panel.querySelectorAll('input[type="range"]')[0];
+  const tSlider = panel.querySelectorAll('input[type="range"]')[1];
+  const xVal = panel.querySelectorAll('.settings-value-display')[0];
+  const tVal = panel.querySelectorAll('.settings-value-display')[1];
+
+  xSlider.addEventListener('input', () => {
+    const v = parseFloat(xSlider.value);
+    xVal.textContent = v.toFixed(3);
+    conn.reactance = v;
+  });
+  xSlider.addEventListener('change', () => persist());
+
+  tSlider.addEventListener('input', () => {
+    const v = parseInt(tSlider.value, 10);
+    tVal.textContent = v + ' MW';
+    conn.thermalLimit = v;
+  });
+  tSlider.addEventListener('change', () => persist());
+
+  // Close button
+  panel.querySelector('.settings-close').addEventListener('click', () => {
+    panel.remove();
+    delete openPanels['_line_' + connId];
+  });
+
+  // Make draggable
+  panel.querySelector('.settings-header').addEventListener('mousedown', (e) => {
+    if (e.target.closest('.settings-close')) return;
+    dragPanel = panel;
+    dragOff = { x: e.clientX - panel.offsetLeft, y: e.clientY - panel.offsetTop };
+    panel.style.zIndex = Date.now();
+    e.preventDefault();
+  });
+
+  openPanels['_line_' + connId] = entry;
+}
 
 document.addEventListener('mousemove', (e) => {
   if (dragPanel) { dragPanel.style.left = (e.clientX - dragOff.x) + 'px'; dragPanel.style.top = (e.clientY - dragOff.y) + 'px'; }
