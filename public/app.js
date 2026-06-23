@@ -6,6 +6,7 @@ const state = {
   selectedNodeIds: new Set(),
   pendingSourceId: null,
   hoverLine: null,
+  lineMode: 'junction', // 'junction' or 'status'
   view: { x: 0, y: 0, scale: 1 },
   spaceDown: false,
   frequency: 50,
@@ -435,6 +436,7 @@ function drawConnections() {
     
     // Color by loading %
     let color = '#7a766e';
+    let lineWidth = sameNet ? 2 : 1.5;
     if (sameNet && c.loadingPct !== undefined) {
       if (c.loadingPct > 120) color = '#8b0000';
       else if (c.loadingPct > 100) color = '#c0392b';
@@ -444,23 +446,19 @@ function drawConnections() {
       color = '#c0392b';
     }
     
+    // Highlight on hover in status mode
+    const isHovered = state.hoverLine && state.hoverLine.conn && state.hoverLine.conn.id === c.id;
+    if (isHovered && state.lineMode === 'status') {
+      color = '#333';
+      lineWidth = 4;
+    }
+    
     ctx.beginPath();
     ctx.strokeStyle = color;
-    ctx.lineWidth = sameNet ? 2 : 1.5;
+    ctx.lineWidth = lineWidth;
     if (!sameNet) ctx.setLineDash([4, 4]);
     ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
     ctx.setLineDash([]);
-
-    // Draw flow/limit label at midpoint
-    if (sameNet && state.view.scale > 0.4) {
-      const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
-      const flow = c.mw !== undefined ? Math.abs(c.mw).toFixed(0) : '?';
-      const limit = c.thermalLimit || 100;
-      ctx.fillStyle = '#999';
-      ctx.font = '9px -apple-system, BlinkMacSystemFont, sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillText(flow + ' / ' + limit + ' MW', mx, my - 2);
-    }
   }
 }
 
@@ -581,7 +579,7 @@ function drawPendingLine() {
 }
 
 function drawHoverDot() {
-  if (!state.hoverLine) return;
+  if (!state.hoverLine || state.lineMode !== 'junction') return;
   const p = worldToScreen(state.hoverLine.x, state.hoverLine.y);
   const r = JUNCTION_RADIUS * state.view.scale;
   ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
@@ -702,6 +700,7 @@ function roundRectCtx(ctx, x, y, w, h, r) {
 function updateCursor(e) {
   if (state.spaceDown) { canvas.style.cursor = ptr.isPanning ? 'grabbing' : 'grab'; return; }
   if (ptr.isDragging) { canvas.style.cursor = 'move'; return; }
+  if (state.hoverLine && state.lineMode === 'status') { canvas.style.cursor = 'pointer'; return; }
   if (e) {
     const hit = hitNode(mouseToWorld(e).x, mouseToWorld(e).y);
     if (hit && isSelected(hit)) { canvas.style.cursor = 'move'; return; }
@@ -1214,7 +1213,14 @@ canvas.addEventListener('mouseup', (e) => {
   if (dbl) { onDoubleClickNode(hit); return; }
 
   const hover = state.hoverLine && findNearestLine(cw.x, cw.y, 15 / state.view.scale);
-  if (hover) { state.hoverLine = hover; splitConnection(hover.conn, hover.x, hover.y); state.hoverLine = null; return; }
+  if (hover) {
+    state.hoverLine = hover;
+    if (state.lineMode === 'status') {
+      openLineSettings(hover.conn.id); state.hoverLine = null; return;
+    } else {
+      splitConnection(hover.conn, hover.x, hover.y); state.hoverLine = null; return;
+    }
+  }
   if (!hit) { state.pendingSourceId = null; state.selectedNodeIds = new Set(); draw(); return; }
   if (state.pendingSourceId) { addConnection(state.pendingSourceId, hit.id); return; }
   state.selectedNodeIds = new Set([hit.id]); draw();
@@ -1274,6 +1280,21 @@ document.addEventListener('keydown', (e) => {
   const meta = e.ctrlKey || e.metaKey;
 
   if (e.key === 'Escape') { islandDrag = null; state.pendingSourceId = null; state.selectedNodeIds = new Set(); state.hoverLine = null; hideMenu(); draw(); }
+
+  if (e.key === 'j' || e.key === 'J') {
+    state.lineMode = state.lineMode === 'junction' ? 'status' : 'junction';
+    const badge = document.getElementById('line-mode-badge');
+    if (badge) {
+      if (state.lineMode === 'status') {
+        badge.className = 'status-badge line-mode-status';
+        badge.textContent = 'ℹ️ Line Status';
+      } else {
+        badge.className = 'status-badge line-mode-junction';
+        badge.textContent = '🪢 Junction';
+      }
+    }
+    draw();
+  }
 
   // Ctrl+C — Copy selected nodes
   if (meta && e.key === 'c' && state.selectedNodeIds.size > 0) {
