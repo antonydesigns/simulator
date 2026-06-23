@@ -13,6 +13,8 @@ const state = {
   clipboard: null, // { nodes: [...copied nodes...], connections: [...] }
 };
 
+let islandDrag = null; // { netId, startMouseX, startMouseY, origPositions: [{id, x, y}] }
+
 // ─── Island Colors ─────────────────────────────────────────────────────
 
 const ISLAND_COLORS = [
@@ -36,9 +38,12 @@ const sim = {
   captureAccum: 0,
 };
 
+function recomputeNetworks() {
+  state.networks = findNetworks();
+}
+
 function simTick() {
-  const networks = findNetworks();
-  state.networks = networks;
+  recomputeNetworks();
   const f0 = 50;
   const dt = 1 / sim.tickHz;
 
@@ -773,7 +778,7 @@ function addNode(type, wx, wy) {
   }
   state.nodes.push(node);
   state.selectedNodeIds = new Set([node.id]);
-  persist(); draw();
+  recomputeNetworks(); persist(); draw();
   return node;
 }
 
@@ -800,7 +805,7 @@ function addConnection(sourceId, targetId) {
   if (state.connections.some(c => (c.sourceId === sourceId && c.targetId === targetId) || (c.sourceId === targetId && c.targetId === sourceId))) return;
   state.connections.push({ sourceId, targetId });
   state.pendingSourceId = null;
-  persist(); draw();
+  recomputeNetworks(); persist(); draw();
 }
 
 // ─── Split Connection ──────────────────────────────────────────────────
@@ -811,7 +816,7 @@ function splitConnection(conn, wx, wy) {
   state.connections = state.connections.filter(c => c !== conn);
   state.connections.push({ sourceId: conn.sourceId, targetId: j.id }, { sourceId: j.id, targetId: conn.targetId });
   state.selectedNodeIds = new Set([j.id]);
-  persist(); draw();
+  recomputeNetworks(); persist(); draw();
 }
 
 // ─── Marquee ───────────────────────────────────────────────────────────
@@ -874,6 +879,7 @@ async function load() {
       }
     }
   } catch (e) { console.error('Load failed:', e); }
+  recomputeNetworks();
 }
 
 // ─── Context Menu ──────────────────────────────────────────────────────
@@ -958,6 +964,22 @@ canvas.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   hideMenu();
   const world = mouseToWorld(e), screen = mouseToScreen(e), hit = hitNode(world.x, world.y);
+
+  // Check island header hit for dragging
+  const islandHit = hit ? null : hitIsland(world.x, world.y);
+  if (islandHit && islandHit.isHeader) {
+    const net = islandHit.net;
+    const origPositions = [...net.nodeIds].map(id => {
+      const n = state.nodes.find(nd => nd.id === id);
+      return n ? { id: n.id, x: n.x, y: n.y } : null;
+    }).filter(Boolean);
+    islandDrag = { netId: net.id, startWorld: { x: world.x, y: world.y }, origPositions };
+    selectedNetworkId = net.id;
+    if (statsPanelVisible) updateStatsPanel();
+    draw();
+    return;
+  }
+
   ptr.downWorld = world; ptr.downScreen = screen; ptr.downTime = Date.now();
   ptr.downNodeId = hit ? hit.id : null;
   ptr.isDragging = false; ptr.isPanning = false; ptr.isSelecting = false; ptr.moved = false;
@@ -967,6 +989,17 @@ canvas.addEventListener('mousedown', (e) => {
 canvas.addEventListener('mousemove', (e) => {
   const world = mouseToWorld(e), screen = mouseToScreen(e);
   ptr.mouseWorld = world; ptr.mouseScreen = screen;
+
+  // Island header drag
+  if (islandDrag) {
+    const dx = world.x - islandDrag.startWorld.x;
+    const dy = world.y - islandDrag.startWorld.y;
+    for (const p of islandDrag.origPositions) {
+      const n = state.nodes.find(nd => nd.id === p.id);
+      if (n) { n.x = p.x + dx; n.y = p.y + dy; }
+    }
+    draw(); return;
+  }
 
   if (ptr.isDragging) {
     const dx = world.x - ptr.downWorld.x, dy = world.y - ptr.downWorld.y;
@@ -994,6 +1027,10 @@ canvas.addEventListener('mousemove', (e) => {
 
 canvas.addEventListener('mouseup', (e) => {
   if (e.button !== 0) return;
+  if (islandDrag) {
+    islandDrag = null;
+    recomputeNetworks(); persist(); draw(); return;
+  }
   if (ptr.isDragging) { ptr.isDragging = false; ptr.downNodeId = null; ptr.downWorld = null; persist(); draw(); updateCursor(e); return; }
   if (ptr.isPanning) { ptr.isPanning = false; ptr.downWorld = null; draw(); updateCursor(e); return; }
   if (ptr.isSelecting) {
@@ -1056,7 +1093,7 @@ document.addEventListener('click', (e) => { if (!menu.contains(e.target)) hideMe
 document.addEventListener('keydown', (e) => {
   const meta = e.ctrlKey || e.metaKey;
 
-  if (e.key === 'Escape') { state.pendingSourceId = null; state.selectedNodeIds = new Set(); state.hoverLine = null; hideMenu(); draw(); }
+  if (e.key === 'Escape') { islandDrag = null; state.pendingSourceId = null; state.selectedNodeIds = new Set(); state.hoverLine = null; hideMenu(); draw(); }
 
   // Ctrl+C — Copy selected nodes
   if (meta && e.key === 'c' && state.selectedNodeIds.size > 0) {
@@ -1124,7 +1161,7 @@ document.addEventListener('keydown', (e) => {
     }
     state.selectedNodeIds = new Set();
     if (hadGen && state.nodes.filter(n => n.type === 'generator').length === 0) state.frequency = 50;
-    persist(); draw();
+    recomputeNetworks(); persist(); draw();
   }
 });
 
