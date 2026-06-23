@@ -896,3 +896,43 @@ html, body {
 .balance-cancel-btn:hover {
   background: #d5d5d5;
 }
+
+/* ─── Toggle switch ─── */
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  gap: 8px;
+}
+.toggle-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: relative;
+  width: 40px; height: 22px;
+  background: #ccc;
+  border-radius: 11px;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  width: 18px; height: 18px;
+  left: 2px; top: 2px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.toggle-switch input:checked + .toggle-slider { background: #6aaa64; }
+.toggle-switch input:checked + .toggle-slider::after { transform: translateX(18px); }
+
+/* ─── Demand curve preview canvas ─── */
+.demand-preview {
+  width: 100%;
+  height: 80px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #faf7f0;
+  margin-top: 4px;
+}

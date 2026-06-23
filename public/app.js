@@ -42,6 +42,7 @@ const sim = {
   dataBuffer: [],
   captureAccum: 0,
   events: [],
+  simTime: 0,
 };
 
 function recomputeNetworks() {
@@ -52,10 +53,33 @@ function recomputeNetworks() {
   }
 }
 
+// ─── Auto-Demand (Noise) ────────────────────────────────────────────────
+// Daily demand curve with weekly variation.
+// t = pattern-time in seconds (720x acceleration: 2 real min = 1 pattern day)
+function demandCurve(t) {
+  const day = 86400;
+  const week = 7 * day;
+  const tod = (((t % day) / day) * 24 + 24) % 24; // hour of day (0-24)
+  const dow = Math.floor((t % week) / day); // day of week (0-6, Mon=0)
+
+  // Daily shape: valley ~4AM, morning peak ~10AM, afternoon peak ~4-6PM
+  let daily = 0.5 - 0.45 * Math.cos((tod - 4) / 24 * 2 * Math.PI);
+  // Morning bump (~10AM)
+  daily += 0.15 * Math.exp(-Math.pow((tod - 10) / 1.5, 2));
+  // Lunch recovery bump
+  daily += 0.05 * Math.exp(-Math.pow((tod - 14) / 2, 2));
+  daily = Math.max(0, Math.min(1, daily));
+
+  // Weekly: weekends (Sat=5, Sun=6) 15% lower
+  const weekend = (dow === 5 || dow === 6) ? 0.85 : 1;
+  return daily * weekend;
+}
+
 function simTick() {
   recomputeNetworks();
   const f0 = 50;
   const dt = 1 / sim.tickHz;
+  sim.simTime += dt;
 
   // Clear stale line flow data — only recomputed lines get updated
   for (const c of state.connections) {
@@ -93,6 +117,16 @@ function simTick() {
       const current = gen.mw || 0;
       const T = totalTarget < current ? (gen.rampDownTC || 0.3) : (gen.turbineTimeConstant || 1);
       gen.mw = current + (totalTarget - current) * dt / T;
+    }
+
+    // --- Auto Demand Curve (noise) ---
+    for (const load of loads) {
+      if (load.noiseEnabled) {
+        const patSec = sim.simTime * 720; // 2 real min = 1 pattern day
+        const mult = demandCurve(patSec);
+        load.mw = Math.round((load.noiseMin || 100) + ((load.noiseMax || 200) - (load.noiseMin || 100)) * mult);
+        load.baseMw = load.mw;
+      }
     }
 
     const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
@@ -488,6 +522,7 @@ function restartSim() {
   sim.dataBuffer = [];
   sim.captureAccum = 0;
   sim.events = [];
+  sim.simTime = 0;
   for (const gen of state.nodes.filter(n => n.type === 'generator')) {
     gen.agcOffset = 0;
     gen.mw = gen.baselineContract || 0;
@@ -1022,11 +1057,109 @@ function drawStrandedIndicators() {
   }
 }
 
+// ─── Auto-Demand Preview Canvas ────────────────────────────────────────
+function drawLoadCurvePreview(canvas, node) {
+  if (!canvas || !node) return;
+  const w = 320, h = 80;
+  const cx = canvas.getContext('2d');
+  const pad = { top: 8, bottom: 15, left: 28, right: 8 };
+  const pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
+
+  cx.clearRect(0, 0, w, h);
+  cx.fillStyle = '#faf7f0';
+  cx.fillRect(0, 0, w, h);
+
+  const minMw = node.noiseMin || 100, maxMw = node.noiseMax || 200;
+  const range = maxMw - minMw || 1;
+
+  // Draw min/max reference lines
+  cx.strokeStyle = '#ddd8ce'; cx.lineWidth = 1; cx.setLineDash([3, 3]);
+  cx.beginPath(); cx.moveTo(pad.left, pad.top + ph); cx.lineTo(w - pad.right, pad.top + ph); cx.stroke();
+  cx.beginPath(); cx.moveTo(pad.left, pad.top); cx.lineTo(w - pad.right, pad.top); cx.stroke();
+  cx.setLineDash([]);
+
+  // Labels
+  cx.fillStyle = '#999'; cx.font = '9px -apple-system, sans-serif'; cx.textAlign = 'right';
+  cx.textBaseline = 'bottom'; cx.fillText(maxMw + ' MW', pad.left - 2, pad.top + 1);
+  cx.textBaseline = 'top'; cx.fillText(minMw + ' MW', pad.left - 2, pad.top + ph - 1);
+
+  // Draw the daily curve (weekday solid, weekend dashed overlay)
+  const daySteps = 240; // 24h × 10 samples
+  const day = 86400;
+
+  // Weekday curve
+  cx.strokeStyle = '#6aaa64'; cx.lineWidth = 2;
+  cx.beginPath();
+  for (let i = 0; i <= daySteps; i++) {
+    const hour = (i / daySteps) * 24;
+    const todSec = (hour / 24) * day;
+    const mult = demandCurve(todSec); // day 0 = Monday
+    const mw = minMw + range * mult;
+    const x = pad.left + (i / daySteps) * pw;
+    const y = pad.top + ph - ((mw - minMw) / range) * ph;
+    i === 0 ? cx.moveTo(x, y) : cx.lineTo(x, y);
+  }
+  cx.stroke();
+
+  // Weekend curve (dashed overlay)
+  cx.strokeStyle = '#4a90d9'; cx.lineWidth = 1.5; cx.setLineDash([4, 4]);
+  cx.beginPath();
+  for (let i = 0; i <= daySteps; i++) {
+    const hour = (i / daySteps) * 24;
+    const todSec = (hour / 24) * day + 5 * day; // Saturday
+    const mult = demandCurve(todSec);
+    const mw = minMw + range * mult;
+    const x = pad.left + (i / daySteps) * pw;
+    const y = pad.top + ph - ((mw - minMw) / range) * ph;
+    i === 0 ? cx.moveTo(x, y) : cx.lineTo(x, y);
+  }
+  cx.stroke();
+  cx.setLineDash([]);
+
+  // Current position (if simulation is running)
+  if (sim.simTime > 0) {
+    const patSec = sim.simTime * 720;
+    const curHour = ((patSec % day) / day) * 24;
+    const curMult = demandCurve(patSec);
+    const curMw = minMw + range * curMult;
+    const cx2 = pad.left + (curHour / 24) * pw;
+    const cy = pad.top + ph - ((curMw - minMw) / range) * ph;
+
+    // Vertical line
+    cx.strokeStyle = 'rgba(231,76,60,0.5)'; cx.lineWidth = 1;
+    cx.beginPath(); cx.moveTo(cx2, pad.top); cx.lineTo(cx2, pad.top + ph); cx.stroke();
+
+    // Dot
+    cx.fillStyle = '#e74c3c';
+    cx.beginPath(); cx.arc(cx2, cy, 4, 0, Math.PI * 2); cx.fill();
+
+    // Hour label
+    cx.fillStyle = '#e74c3c'; cx.font = '9px -apple-system, sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'top';
+    cx.fillText(Math.floor(curHour).toString().padStart(2,'0') + ':00', cx2, pad.top + ph + 2);
+  }
+
+  // Hour ticks
+  cx.fillStyle = '#bbb'; cx.font = '8px -apple-system, sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'top';
+  for (let h = 0; h <= 24; h += 6) {
+    const x = pad.left + (h / 24) * pw;
+    cx.fillText(h.toString().padStart(2,'0') + ':00', x, pad.top + ph + 2);
+  }
+}
+
 function draw() {
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   drawGrid(); drawIslands(); drawConnections(); drawNodes(); drawPendingLine(); drawHoverDot(); drawSelectionRect(); drawStrandedIndicators();
+
+  // Redraw load preview canvases (updates position marker)
+  if (sim.simTime > 0) {
+    for (const c of document.querySelectorAll('.demand-preview')) {
+      const id = c.getAttribute('data-node-id');
+      const node = state.nodes.find(n => n.id === id);
+      if (node) drawLoadCurvePreview(c, node);
+    }
+  }
 }
 
 // ─── Islands ──────────────────────────────────────────────────────────
@@ -1377,7 +1510,7 @@ function shortId(type) {
 function addNode(type, wx, wy) {
   let node;
   if (type === 'load') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10, baseMw: 10, shedPct: 0 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10, baseMw: 10, shedPct: 0, noiseEnabled: false, noiseMin: 100, noiseMax: 200 };
   } else if (type === 'generator') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, tripped: false, freqTimer: 0 };
   } else if (type === 'storage') {
@@ -1462,7 +1595,7 @@ async function load() {
     state.connections = data.connections || [];
     if (data.view) state.view = data.view;
     state.selectedNodeIds = new Set(); state.selectedConnIds = new Set();
-    sim.dataBuffer = []; sim.events = []; sim.captureAccum = 0;
+    sim.dataBuffer = []; sim.events = []; sim.captureAccum = 0; sim.simTime = 0;
     state.frequency = 50;
     // Migrate legacy connections (add id, reactance, thermalLimit, trip fields)
     for (const c of state.connections) {
@@ -1500,6 +1633,9 @@ async function load() {
       if (n.type === 'load') {
         if (n.baseMw === undefined) n.baseMw = n.mw || 10;
         if (n.shedPct === undefined) n.shedPct = 0;
+        if (n.noiseEnabled === undefined) n.noiseEnabled = false;
+        if (n.noiseMin === undefined) n.noiseMin = 100;
+        if (n.noiseMax === undefined) n.noiseMax = 200;
       }
       if (n.type === 'storage') {
         if (n.chargeRate === undefined) n.chargeRate = 500;
@@ -2360,13 +2496,75 @@ function openSettings(nodeId) {
     panel.innerHTML = `
       <div class="settings-header"><span class="settings-title">Load ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
-        <div class="settings-row"><label class="settings-label">Demand (MW)</label><div class="settings-slider-group"><input type="range" class="mw-slider" min="0" max="500" step="10" value="${node.mw || 10}"><span class="mw-value">${node.mw || 10}</span></div></div>
+        <div class="settings-row">
+          <label class="settings-label">Auto Demand Curve</label>
+          <label class="toggle-switch">
+            <input type="checkbox" class="noise-toggle" ${node.noiseEnabled ? 'checked' : ''}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="settings-row noise-row"${node.noiseEnabled ? '' : ' style="display:none"'}>
+          <label class="settings-label">Min (MW)</label>
+          <div class="settings-slider-group"><input type="range" class="noise-min-slider" min="0" max="500" step="10" value="${node.noiseMin || 100}"><span class="noise-min-value">${node.noiseMin || 100}</span></div>
+        </div>
+        <div class="settings-row noise-row"${node.noiseEnabled ? '' : ' style="display:none"'}>
+          <label class="settings-label">Max (MW)</label>
+          <div class="settings-slider-group"><input type="range" class="noise-max-slider" min="0" max="500" step="10" value="${node.noiseMax || 200}"><span class="noise-max-value">${node.noiseMax || 200}</span></div>
+        </div>
+        <div class="settings-row noise-row"${node.noiseEnabled ? '' : ' style="display:none"'}>
+          <canvas class="demand-preview" width="320" height="80" data-node-id="${node.id}"></canvas>
+        </div>
+        <div class="settings-row manual-row"${node.noiseEnabled ? ' style="display:none"' : ''}>
+          <label class="settings-label">Demand (MW)</label>
+          <div class="settings-slider-group"><input type="range" class="mw-slider" min="0" max="500" step="10" value="${node.mw || 10}"><span class="mw-value">${node.mw || 10}</span></div>
+        </div>
       </div>
       <div class="settings-resize-handle"></div>`;
 
     const slider = panel.querySelector('.mw-slider'), valEl = panel.querySelector('.mw-value');
     slider.addEventListener('input', () => { const v = parseInt(slider.value, 10); valEl.textContent = v; node.mw = v; node.baseMw = v; draw(); });
     slider.addEventListener('change', () => persist());
+
+    const noiseToggle = panel.querySelector('.noise-toggle');
+    noiseToggle.addEventListener('change', () => {
+      node.noiseEnabled = noiseToggle.checked;
+      // Show/hide noise rows and manual row
+      for (const el of panel.querySelectorAll('.noise-row')) el.style.display = noiseToggle.checked ? '' : 'none';
+      const manualRow = panel.querySelector('.manual-row');
+      if (manualRow) manualRow.style.display = noiseToggle.checked ? 'none' : '';
+      draw();
+      persist();
+    });
+
+    const noiseMinSlider = panel.querySelector('.noise-min-slider');
+    const noiseMinVal = panel.querySelector('.noise-min-value');
+    if (noiseMinSlider) {
+      noiseMinSlider.addEventListener('input', () => {
+        const v = parseInt(noiseMinSlider.value, 10);
+        noiseMinVal.textContent = v;
+        node.noiseMin = v;
+        drawLoadCurvePreview(panel.querySelector('.demand-preview'), node);
+        draw();
+      });
+      noiseMinSlider.addEventListener('change', () => persist());
+    }
+
+    const noiseMaxSlider = panel.querySelector('.noise-max-slider');
+    const noiseMaxVal = panel.querySelector('.noise-max-value');
+    if (noiseMaxSlider) {
+      noiseMaxSlider.addEventListener('input', () => {
+        const v = parseInt(noiseMaxSlider.value, 10);
+        noiseMaxVal.textContent = v;
+        node.noiseMax = v;
+        drawLoadCurvePreview(panel.querySelector('.demand-preview'), node);
+        draw();
+      });
+      noiseMaxSlider.addEventListener('change', () => persist());
+    }
+
+    // Draw the preview canvas on open
+    const previewCanvas = panel.querySelector('.demand-preview');
+    if (previewCanvas) drawLoadCurvePreview(previewCanvas, node);
   }
 
   const count = Object.keys(openPanels).length;
