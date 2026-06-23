@@ -135,6 +135,16 @@ function simTick() {
         const stTC = 0.1;
         const prevResp = st.mwResponse || 0;
         st.mwResponse = prevResp + (target - prevResp) * Math.min(1, dt / stTC);
+      } else if (st.mode === 'fcr-only') {
+        const droop = st.droop || 0.04;
+        const dev = (freq - f0) / f0;
+        const govMod = -(1 / droop) * dev * dr;
+        let target = bc + govMod;
+        target = Math.max(-cr, Math.min(dr, target));
+        target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
+        const stTC = 0.1;
+        const prevResp = st.mwResponse || 0;
+        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, dt / stTC);
       } else if (st.mode === 'fixed') {
         let target = bc + (st.fixedTarget || 0);
         target = Math.max(-cr, Math.min(dr, target));
@@ -341,7 +351,7 @@ function simTick() {
         ? '+' + Math.round(st.mwResponse || 0) + ' MW'
         : Math.round(st.mwResponse || 0) + ' MW';
       if (entry.modeSelect) entry.modeSelect.value = st.mode || 'balancing';
-      if (entry.fcrGroup) entry.fcrGroup.style.display = (st.mode === 'balancing') ? '' : 'none';
+      if (entry.fcrGroup) entry.fcrGroup.style.display = (st.mode === 'balancing' || st.mode === 'fcr-only') ? '' : 'none';
       if (entry.fixedGroup) entry.fixedGroup.style.display = (st.mode === 'fixed') ? '' : 'none';
       if (entry.fcrSlider && entry.fcrVal) {
         entry.fcrSlider.value = st.fcrHeadroom || 10;
@@ -521,7 +531,7 @@ function balanceGrid() {
     const totalDemand = loads.reduce((sum, n) => sum + (n.mw || 0), 0);
     const fixedGens = gens.filter(g => g.mode === 'fixed');
     const flexGens = gens.filter(g => g.mode !== 'fixed');
-    const notFixedStor = storages.filter(s => s.mode !== 'idle');
+    const notFixedStor = storages.filter(s => s.mode !== 'fixed');
 
     const fixedSupply = fixedGens.reduce((sum, g) => sum + Math.min(g.dispatchTarget || 0, g.rating || Infinity), 0);
     let remaining = totalDemand - fixedSupply;
@@ -2038,17 +2048,8 @@ function openSettings(nodeId) {
       <div class="settings-header"><span class="settings-title">Storage ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
         <div class="settings-row"><label class="settings-label">State of Charge</label><div class="settings-slider-group"><input type="range" class="soc-slider" min="0" max="${cap}" step="0.1" value="${socVal}"><span class="settings-value-display storage-soc">${socVal} MWh</span></div></div>
-        <div class="settings-row sep-top"><label class="settings-label">Mode</label>
-          <div class="settings-slider-group">
-            <select class="storage-mode-select">
-              <option value="balancing" ${mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + droop)</option>
-              <option value="fixed" ${mode === 'fixed' ? 'selected' : ''}>Fixed (setpoint)</option>
-              <option value="idle" ${mode === 'idle' ? 'selected' : ''}>Idle</option>
-            </select>
-          </div>
-        </div>
         <div class="storage-fcr-group">
-          <div class="settings-row"><label class="settings-label">Dispatch</label><div class="settings-slider-group"><input type="range" class="baseline-contract-slider" min="${-chgR}" max="${dchgR}" step="1" value="${node.baselineContract || 0}"><span class="baseline-contract-value">${(node.baselineContract || 0) >= 0 ? '+' : ''}${node.baselineContract || 0} MW</span></div></div>
+          <div class="settings-row"><label class="settings-label">Baseline Contract</label><div class="settings-slider-group"><input type="range" class="baseline-contract-slider" min="${-chgR}" max="${dchgR}" step="1" value="${node.baselineContract || 0}"><span class="baseline-contract-value">${(node.baselineContract || 0) >= 0 ? '+' : ''}${node.baselineContract || 0} MW</span></div></div>
           <div class="settings-row"><label class="settings-label">FCR Headroom</label><div class="settings-slider-group"><input type="range" class="fcr-headroom-slider" min="1" max="${Math.max(chgR, dchgR)}" step="1" value="${fcr}"><span class="fcr-headroom-value">${fcr} MW</span></div></div>
           <div class="settings-row"><label class="settings-label">Droop</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="0.5" max="20" step="0.5" value="${drop}"><span class="droop-value">${drop}%</span></div></div>
         </div>
@@ -2058,6 +2059,15 @@ function openSettings(nodeId) {
         <div class="settings-row"><label class="settings-label">Discharge Rate</label><div class="settings-slider-group"><input type="range" class="discharge-slider" min="1" max="500" step="1" value="${dchgR}"><span class="discharge-value">${dchgR} MW</span></div></div>
         <div class="settings-row"><label class="settings-label">Charge Rate</label><div class="settings-slider-group"><input type="range" class="charge-slider" min="1" max="500" step="1" value="${chgR}"><span class="charge-value">${chgR} MW</span></div></div>
         <div class="settings-row"><label class="settings-label">Max Capacity</label><div class="settings-slider-group"><input type="range" class="capacity-slider" min="10" max="1000" step="10" value="${cap}"><span class="capacity-value">${cap} MWh</span></div></div>
+        <div class="settings-row sep-top"><label class="settings-label">Mode</label>
+          <div class="settings-slider-group">
+            <select class="storage-mode-select">
+              <option value="balancing" ${mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option>
+              <option value="fcr-only" ${mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option>
+              <option value="fixed" ${mode === 'fixed' ? 'selected' : ''}>Fixed</option>
+            </select>
+          </div>
+        </div>
       </div>
       <div class="settings-resize-handle"></div>`;
 
@@ -2087,7 +2097,7 @@ function openSettings(nodeId) {
     // Mode select
     entry.modeSelect.addEventListener('change', () => {
       node.mode = entry.modeSelect.value;
-      entry.fcrGroup.style.display = node.mode === 'balancing' ? '' : 'none';
+      entry.fcrGroup.style.display = (node.mode === 'balancing' || node.mode === 'fcr-only') ? '' : 'none';
       entry.fixedGroup.style.display = node.mode === 'fixed' ? '' : 'none';
       persist();
     });
