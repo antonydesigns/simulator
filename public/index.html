@@ -29,6 +29,7 @@
     <span id="fcr-badge" class="status-badge fcr-inactive">FCR</span>
     <span id="agc-badge" class="status-badge agc-inactive">AGC</span>
     <span class="ctrl-sep"></span>
+    <button id="merit-btn" class="ctrl-btn" title="Merit order">📈 Merit Order</button>
     <button id="stats-btn" class="ctrl-btn" title="System stats">📊</button>
   </div>
 
@@ -48,6 +49,17 @@
       <button id="freq-chart-close-btn" class="freq-chart-close">✕</button>
     </div>
     <canvas id="freq-chart-canvas"></canvas>
+  </div>
+
+  <!-- Merit Order Panel -->
+  <div id="merit-panel" class="merit-panel hidden">
+    <div class="merit-header">
+      <span>Merit Order</span>
+      <button id="merit-close-btn" class="merit-close">✕</button>
+    </div>
+    <div class="merit-body">
+      <canvas id="merit-canvas"></canvas>
+    </div>
   </div>
 
   <!-- Context Menu -->

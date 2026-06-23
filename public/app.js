@@ -172,6 +172,7 @@ function simTick() {
     if (sim.marketTimer >= 900) {
       sim.marketTimer = 0;
       dispatchMeritOrder();
+      if (meritChartVisible) drawMeritOrderChart();
     }
 
     const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
@@ -2945,6 +2946,7 @@ function updateStatsPanel() {
 // ─── Frequency Chart ──────────────────────────────────────────
 
 let freqChartVisible = false;
+let meritChartVisible = false;
 
 function drawFreqChart() {
   const canvas = document.getElementById('freq-chart-canvas');
@@ -3074,6 +3076,144 @@ document.getElementById('stats-panel').addEventListener('mousedown', (e) => {
     e.preventDefault();
   }
 });
+
+// ─── Merit Order Panel ───────────────────────────────────────────
+
+document.getElementById('merit-btn').addEventListener('click', () => {
+  meritChartVisible = !meritChartVisible;
+  document.getElementById('merit-panel').classList.toggle('hidden');
+  if (meritChartVisible) drawMeritOrderChart();
+});
+
+document.getElementById('merit-close-btn').addEventListener('click', () => {
+  meritChartVisible = false;
+  document.getElementById('merit-panel').classList.add('hidden');
+});
+
+// Make merit panel draggable
+document.getElementById('merit-panel').addEventListener('mousedown', (e) => {
+  if (e.target.closest('.merit-header') && !e.target.closest('.merit-close')) {
+    const panel = document.getElementById('merit-panel');
+    dragPanel = panel;
+    dragOff = { x: e.clientX - panel.offsetLeft, y: e.clientY - panel.offsetTop };
+    panel.style.zIndex = Date.now();
+    e.preventDefault();
+  }
+});
+
+function drawMeritOrderChart() {
+  const canvas = document.getElementById('merit-canvas');
+  if (!canvas || !meritChartVisible) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const w = rect.width, h = rect.height;
+  const pad = { top: 28, right: 16, bottom: 30, left: 52 };
+  const pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
+
+  ctx.fillStyle = '#f5f3ee';
+  ctx.fillRect(0, 0, w, h);
+  ctx.save();
+  ctx.translate(pad.left, pad.top);
+
+  const gens = state.nodes.filter(n => n.type === 'generator' && !n.tripped && n.mode !== 'fixed')
+    .sort((a, b) => a.bidPrice - b.bidPrice);
+  const totalLoad = state.nodes.filter(n => n.type === 'load').reduce((s, l) => s + (l.mw || 0), 0);
+
+  if (!gens.length) { ctx.restore(); return; }
+
+  const maxPrice = Math.max(...gens.map(g => g.bidPrice), 1) * 1.15;
+  const totalQty = gens.reduce((s, g) => s + (g.bidQty || g.rating || 100), 0);
+  const xMax = Math.max(totalQty, totalLoad) * 1.1;
+
+  // Grid lines
+  ctx.strokeStyle = '#e0dcd2';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 5; i++) {
+    const y = (ph / 5) * i;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(pw, y); ctx.stroke();
+    ctx.fillStyle = '#999';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('$' + (maxPrice - (maxPrice / 5) * i).toFixed(0), -8, y);
+  }
+  for (let i = 0; i <= 5; i++) {
+    const x = (pw / 5) * i;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ph); ctx.stroke();
+    ctx.fillStyle = '#999';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(Math.round((xMax / 5) * i) + ' MWh', x, ph + 6);
+  }
+
+  // Staircase
+  let cum = 0;
+  const steps = gens.map(g => {
+    const q = g.bidQty || g.rating || 100;
+    const s = { x1: cum, x2: cum + q, price: g.bidPrice, gen: g };
+    cum += q;
+    return s;
+  });
+
+  let marginal = null;
+  for (const s of steps) { if (s.x1 < totalLoad) marginal = s; }
+
+  for (const s of steps) {
+    const x1 = (s.x1 / xMax) * pw, x2 = (s.x2 / xMax) * pw;
+    const y = ph - (s.price / maxPrice) * ph, hh = ph - y;
+    const t = s.price / maxPrice;
+    ctx.fillStyle = `rgba(${Math.round(60 + t * 195)},${Math.round(180 - t * 150)},${Math.round(50 - t * 30)},0.7)`;
+    ctx.fillRect(x1, y, x2 - x1, hh);
+    ctx.strokeStyle = '#666';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x1, y, x2 - x1, hh);
+    if (x2 - x1 > 40) {
+      ctx.fillStyle = '#333';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(s.gen.shortId + ' $' + s.price.toFixed(0), (x1 + x2) / 2, y - 2);
+    }
+  }
+
+  // Load line
+  const lx = (totalLoad / xMax) * pw;
+  ctx.strokeStyle = '#2c6b9e';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 4]);
+  ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, ph);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // SMP marker
+  if (marginal) {
+    const sy = ph - (marginal.price / maxPrice) * ph;
+    ctx.fillStyle = '#2c6b9e';
+    ctx.beginPath(); ctx.arc(lx, sy, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(lx, sy, 6, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#2c6b9e';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillText('SMP $' + (state.smp || marginal.price).toFixed(1) + '/MWh', lx + 10, sy - 4);
+  }
+
+  if (totalLoad > totalQty) {
+    ctx.fillStyle = '#b33';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('⚠ Insufficient generation capacity!', pw / 2, ph / 2);
+  }
+
+  ctx.restore();
+}
 
 // ─── Frequency Chart ──────────────────────────────────────────
 
