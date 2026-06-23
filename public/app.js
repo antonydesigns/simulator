@@ -357,10 +357,6 @@ function simTick() {
           ? '+' + Math.round(st.fixedTarget || 0) + ' MW'
           : Math.round(st.fixedTarget || 0) + ' MW';
       }
-      const agcEl = entry.panel && entry.panel.querySelector('.storage-agc-offset');
-      if (agcEl) agcEl.textContent = (st.agcOffset || 0) >= 0
-        ? '+' + Math.round(st.agcOffset || 0) + ' MW'
-        : Math.round(st.agcOffset || 0) + ' MW';
     }
   }
 
@@ -2017,7 +2013,6 @@ function openSettings(nodeId) {
           <div class="settings-row"><label class="settings-label">Dispatch</label><div class="settings-slider-group"><input type="range" class="baseline-contract-slider" min="${-chgR}" max="${dchgR}" step="1" value="${node.baselineContract || 0}"><span class="baseline-contract-value">${(node.baselineContract || 0) >= 0 ? '+' : ''}${node.baselineContract || 0} MW</span></div></div>
           <div class="settings-row"><label class="settings-label">FCR Headroom</label><div class="settings-slider-group"><input type="range" class="fcr-headroom-slider" min="1" max="${Math.max(chgR, dchgR)}" step="1" value="${fcr}"><span class="fcr-headroom-value">${fcr} MW</span></div></div>
           <div class="settings-row"><label class="settings-label">Droop</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="0.5" max="20" step="0.5" value="${drop}"><span class="droop-value">${drop}%</span></div></div>
-          <div class="settings-row"><label class="settings-label">AGC</label><div class="settings-value-display storage-agc-offset">0 MW</div></div>
         </div>
         <div class="storage-fixed-group" style="display:${mode === 'fixed' ? '' : 'none'}">
           <div class="settings-row"><label class="settings-label">Target</label><div class="settings-slider-group"><input type="range" class="fixed-target-slider" min="${-chgR}" max="${dchgR}" step="1" value="${ft}"><span class="fixed-target-value">${ft >= 0 ? '+' : ''}${ft} MW</span></div></div>
@@ -2325,6 +2320,15 @@ function updateStatsPanel() {
       const dir = mw > 0.5 ? 'discharge' : (mw < -0.5 ? 'charge' : 'idle');
       html += '<div class="stats-row"><span>' + (st.shortId || st.id.slice(-4)) + tag + ' (' + dir + ')</span><span class="value">' + (mw >= 0 ? '+' : '') + Math.round(mw) + ' MW</span></div>';
       html += '<div style="padding-left:12px;font-size:12px;color:#999;">SoC: ' + (st.mw || 0).toFixed(2) + '/' + Math.round(st.maxCapacity || 100) + ' MWh</div>';
+      const bc = st.baselineContract || 0;
+      const sDev = (islandFreq - 50) / 50;
+      const sGovMod = -(1 / (st.droop || 0.04)) * sDev * (st.dischargeRate || 500);
+      const sAgc = st.agcOffset || 0;
+      if (Math.abs(sGovMod) > 0.5 || Math.abs(sAgc) > 0.5) {
+        html += '<div class="stats-row" style="padding-left:12px;font-size:12px;color:#999;">';
+        html += '<span>base ' + Math.round(bc) + ' + droop ' + (sGovMod >= 0 ? '+' : '') + Math.round(sGovMod) + ' + AGC ' + (sAgc >= 0 ? '+' : '') + Math.round(sAgc) + '</span>';
+        html += '</div>';
+      }
     }
     html += '<div class="stats-row total"><span>Net storage</span><span class="value">' + (totalStor >= 0 ? '+' : '') + Math.round(totalStor) + ' MW</span></div>';
     html += '</div>';
