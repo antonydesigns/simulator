@@ -357,6 +357,12 @@ function simTick() {
           ? '+' + Math.round(st.fixedTarget || 0) + ' MW'
           : Math.round(st.fixedTarget || 0) + ' MW';
       }
+      if (entry.bcSlider && entry.bcVal) {
+        entry.bcSlider.value = st.baselineContract || 0;
+        entry.bcVal.textContent = (st.baselineContract || 0) >= 0
+          ? '+' + Math.round(st.baselineContract || 0) + ' MW'
+          : Math.round(st.baselineContract || 0) + ' MW';
+      }
     }
   }
 
@@ -556,6 +562,18 @@ function balanceGrid() {
   draw();
   updateControls();
   updateStatsPanel();
+
+  // Update open settings panels for storage dispatch slider
+  for (const nodeId of Object.keys(openPanels)) {
+    const entry = openPanels[nodeId];
+    const st = state.nodes.find(n => n.id === nodeId && n.type === 'storage');
+    if (st && entry.bcSlider && entry.bcVal) {
+      entry.bcSlider.value = st.baselineContract || 0;
+      entry.bcVal.textContent = (st.baselineContract || 0) >= 0
+        ? '+' + Math.round(st.baselineContract || 0) + ' MW'
+        : Math.round(st.baselineContract || 0) + ' MW';
+    }
+  }
 }
 
 async function saveSnapshot() {
@@ -2050,6 +2068,8 @@ function openSettings(nodeId) {
       node.baselineContract = v;
     });
     bcSlider.addEventListener('change', () => persist());
+    entry.bcSlider = bcSlider;
+    entry.bcVal = bcVal;
 
     // Mode select
     entry.modeSelect.addEventListener('change', () => {
