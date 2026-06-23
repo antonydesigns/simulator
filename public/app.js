@@ -1245,7 +1245,7 @@ function addNode(type, wx, wy) {
   } else if (type === 'generator') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, tripped: false, freqTimer: 0 };
   } else if (type === 'storage') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 50, dischargeRate: 50, maxCapacity: 100, mode: 'balancing', baselineContract: 0, fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 500, dischargeRate: 500, maxCapacity: 100, mode: 'balancing', baselineContract: 0, fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0 };
   } else {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0 };
   }
@@ -1366,8 +1366,8 @@ async function load() {
         if (n.shedPct === undefined) n.shedPct = 0;
       }
       if (n.type === 'storage') {
-        if (n.chargeRate === undefined) n.chargeRate = 50;
-        if (n.dischargeRate === undefined) n.dischargeRate = 50;
+        if (n.chargeRate === undefined) n.chargeRate = 500;
+        if (n.dischargeRate === undefined) n.dischargeRate = 500;
         if (n.maxCapacity === undefined) n.maxCapacity = 100;
         if (n.baselineContract === undefined) n.baselineContract = 0;
         if (n.mode === undefined) n.mode = 'balancing';
@@ -1980,8 +1980,8 @@ function openSettings(nodeId) {
         <div class="storage-fixed-group" style="display:${mode === 'fixed' ? '' : 'none'}">
           <div class="settings-row"><label class="settings-label">Target</label><div class="settings-slider-group"><input type="range" class="fixed-target-slider" min="${-chgR}" max="${dchgR}" step="1" value="${ft}"><span class="fixed-target-value">${ft >= 0 ? '+' : ''}${ft} MW</span></div></div>
         </div>
-        <div class="settings-row"><label class="settings-label">Discharge Rate</label><div class="settings-slider-group"><input type="range" class="discharge-slider" min="1" max="200" step="1" value="${dchgR}"><span class="discharge-value">${dchgR} MW</span></div></div>
-        <div class="settings-row"><label class="settings-label">Charge Rate</label><div class="settings-slider-group"><input type="range" class="charge-slider" min="1" max="200" step="1" value="${chgR}"><span class="charge-value">${chgR} MW</span></div></div>
+        <div class="settings-row"><label class="settings-label">Discharge Rate</label><div class="settings-slider-group"><input type="range" class="discharge-slider" min="1" max="500" step="1" value="${dchgR}"><span class="discharge-value">${dchgR} MW</span></div></div>
+        <div class="settings-row"><label class="settings-label">Charge Rate</label><div class="settings-slider-group"><input type="range" class="charge-slider" min="1" max="500" step="1" value="${chgR}"><span class="charge-value">${chgR} MW</span></div></div>
         <div class="settings-row"><label class="settings-label">Max Capacity</label><div class="settings-slider-group"><input type="range" class="capacity-slider" min="10" max="1000" step="10" value="${cap}"><span class="capacity-value">${cap} MWh</span></div></div>
       </div>
       <div class="settings-resize-handle"></div>`;
