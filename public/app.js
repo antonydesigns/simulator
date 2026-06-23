@@ -127,11 +127,10 @@ function simTick() {
   // --- Step 4: AGC (aFRR / secondary control) ---
   // Slowly adjusts agcOffset to restore 50 Hz.
   // Distribution proportional to aFRR upward headroom.
-  // Rate-limited per gen (5 MW/s) + anti-windup: only accumulate if
-  // gen.mw has tracked to ≥70% of the already-commanded offset.
+  // Rate-limited per gen (5 MW/s).
   const balancingGens = gens.filter(g => g.mode === 'balancing');
   const freqErr = f0 - state.frequency;
-  if (balancingGens.length > 0 && Math.abs(freqErr) > 0.02) {
+  if (balancingGens.length > 0) {
     const agcRateLimit = 5; // MW/s per gen
     const maxDelta = agcRateLimit * dt;
     const totalHeadroom = balancingGens.reduce((s, g) => s + Math.max(0, (g.afrrMax !== undefined ? g.afrrMax : (g.rating || 100)) - (g.baselineContract || 0) - (g.fcrHeadroom || 10)), 0);
