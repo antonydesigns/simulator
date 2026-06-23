@@ -1092,10 +1092,11 @@ function findNetworks() {
     const netNodes = [...nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
     const hasGen = netNodes.some(n => n.type === 'generator');
     const hasLoad = netNodes.some(n => n.type === 'load');
+    const hasConnection = state.connections.some(c => nodeIds.has(c.sourceId) && nodeIds.has(c.targetId));
     const match = oldNets.find(o => o.nodeIds && setsEqual(o.nodeIds, nodeIds));
     const net = match || { id: 'net_' + newNets.length, freq: 50, color: ISLAND_COLORS[newNets.length % ISLAND_COLORS.length] };
     net.nodeIds = nodeIds;
-    net.valid = hasGen || hasLoad;
+    net.valid = (hasGen || hasLoad) && hasConnection;
     net.boundingBox = computeBoundingBox(net);
     if (!match) net.customName = null;
     newNets.push(net);
