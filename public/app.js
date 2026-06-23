@@ -355,6 +355,10 @@ function simTick() {
           ? '+' + Math.round(st.fixedTarget || 0) + ' MW'
           : Math.round(st.fixedTarget || 0) + ' MW';
       }
+      const agcEl = entry.panel && entry.panel.querySelector('.storage-agc-offset');
+      if (agcEl) agcEl.textContent = (st.agcOffset || 0) >= 0
+        ? '+' + Math.round(st.agcOffset || 0) + ' MW'
+        : Math.round(st.agcOffset || 0) + ' MW';
     }
   }
 
@@ -2011,6 +2015,7 @@ function openSettings(nodeId) {
           <div class="settings-row"><label class="settings-label">Dispatch</label><div class="settings-slider-group"><input type="range" class="baseline-contract-slider" min="${-chgR}" max="${dchgR}" step="1" value="${node.baselineContract || 0}"><span class="baseline-contract-value">${(node.baselineContract || 0) >= 0 ? '+' : ''}${node.baselineContract || 0} MW</span></div></div>
           <div class="settings-row"><label class="settings-label">FCR Headroom</label><div class="settings-slider-group"><input type="range" class="fcr-headroom-slider" min="1" max="${Math.max(chgR, dchgR)}" step="1" value="${fcr}"><span class="fcr-headroom-value">${fcr} MW</span></div></div>
           <div class="settings-row"><label class="settings-label">Droop</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="0.5" max="20" step="0.5" value="${drop}"><span class="droop-value">${drop}%</span></div></div>
+          <div class="settings-row"><label class="settings-label">AGC</label><div class="settings-value-display storage-agc-offset">0 MW</div></div>
         </div>
         <div class="storage-fixed-group" style="display:${mode === 'fixed' ? '' : 'none'}">
           <div class="settings-row"><label class="settings-label">Target</label><div class="settings-slider-group"><input type="range" class="fixed-target-slider" min="${-chgR}" max="${dchgR}" step="1" value="${ft}"><span class="fixed-target-value">${ft >= 0 ? '+' : ''}${ft} MW</span></div></div>
