@@ -125,6 +125,11 @@ function simTick() {
         const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
         if (Math.abs(clamped) > 0.0001) {
           gen.agcOffset = (gen.agcOffset || 0) + clamped;
+          // Clamp agcOffset so total target stays within achievable bounds
+          // even with max FCR: baseline ± fcrHeadroom + agcOffset ∈ [0, rating]
+          const minAgc = (gen.fcrHeadroom || 10) - (gen.baselineContract || 0);
+          const maxAgc = (gen.rating || 100) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10);
+          gen.agcOffset = Math.max(minAgc, Math.min(maxAgc, gen.agcOffset));
         }
       }
     }
