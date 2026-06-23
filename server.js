@@ -35,8 +35,8 @@ app.get("/api/grid", (req, res) => {
 });
 
 app.post("/api/grid", (req, res) => {
-  const { nodes, connections } = req.body;
-  const data = { nodes: nodes || [], connections: connections || [] };
+  const { nodes, connections, view } = req.body;
+  const data = { nodes: nodes || [], connections: connections || [], view };
   saveData(data);
   res.json({ ok: true });
 });

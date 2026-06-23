@@ -609,7 +609,7 @@ function computeMarqueeSelection(w1, w2) {
 // ─── Persistence ───────────────────────────────────────────────────────
 
 async function persist() {
-  try { await fetch('/api/grid', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nodes: state.nodes, connections: state.connections }) }); }
+  try { await fetch('/api/grid', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nodes: state.nodes, connections: state.connections, view: state.view }) }); }
   catch (e) { console.error('Persist failed:', e); }
 }
 
@@ -619,6 +619,7 @@ async function load() {
     const data = await res.json();
     state.nodes = data.nodes || [];
     state.connections = data.connections || [];
+    if (data.view) state.view = data.view;
     state.selectedNodeIds = new Set();
     state.frequency = 50;
     for (const n of state.nodes) {
