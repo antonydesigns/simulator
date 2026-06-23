@@ -46,7 +46,7 @@ const sim = {
   events: [],
   simTime: 0,
   speed: 1,
-  marketTimer: 0,
+  lastMarketPat: 0,
 };
 
 function recomputeNetworks() {
@@ -168,9 +168,9 @@ function simTick() {
     }
 
     // --- Market dispatch (15 pattern-minutes = 900 pattern-seconds) ---
-    sim.marketTimer = (sim.marketTimer || 0) + dt;
-    if (sim.marketTimer >= 900) {
-      sim.marketTimer = 0;
+    const patSec = sim.simTime * 720;
+    if (patSec - (sim.lastMarketPat || 0) >= 900) {
+      sim.lastMarketPat = patSec;
       dispatchMeritOrder();
       if (meritChartVisible) drawMeritOrderChart();
     }
@@ -575,7 +575,7 @@ function restartSim() {
   sim.captureAccum = 0;
   sim.events = [];
   sim.simTime = 0;
-  sim.marketTimer = 0;
+  sim.lastMarketPat = 0;
   // Reset load shedding first so loads have MW values for market dispatch
   for (const load of state.nodes.filter(n => n.type === 'load')) {
     load.shedPct = 0;
@@ -2121,6 +2121,8 @@ document.addEventListener('keydown', (e) => {
       newNode.id = newId;
       newNode.x = n.x + offset;
       newNode.y = n.y + offset;
+      newNode.shortId = shortId(n.type);
+      newNode.label = '';
       newNodes.push(newNode);
     }
     state.nodes.push(...newNodes);
@@ -2205,7 +2207,7 @@ document.addEventListener('keydown', (e) => {
       const newId = uid();
       idMap[oldId] = newId;
       const offset = 30;
-      const fresh = { ...n, id: newId, x: n.x + offset, y: n.y + offset, shortId: shortId(n.type) };
+      const fresh = { ...n, id: newId, x: n.x + offset, y: n.y + offset, shortId: shortId(n.type), label: '' };
       if (fresh.type === 'generator') { fresh.tripped = false; fresh.freqTimer = 0; }
       if (fresh.type === 'load') { fresh.shedPct = 0; fresh.baseMw = fresh.mw || 10; }
       if (fresh.type === 'storage') { fresh.mwResponse = 0; fresh.agcOffset = 0; }
