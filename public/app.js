@@ -654,7 +654,7 @@ async function saveSnapshot() {
 
 const ptr = {
   downWorld: null, downScreen: null, downTime: 0, downNodeId: null,
-  dragOffset: { x: 0, y: 0 }, isDragging: false, isPanning: false, isSelecting: false,
+  dragOffset: { x: 0, y: 0 }, isDragging: false, isPanning: false, isSelecting: false, rightButton: false,
   _panOffsetX: 0, _panOffsetY: 0, lastClickTime: 0, lastClickNodeId: null,
   mouseWorld: null, mouseScreen: null, moved: false,
 };
@@ -1508,7 +1508,7 @@ function hitIsland(wx, wy) {
   return null;
 }
 
-function showMenu(e, nodeHit) {
+function showMenu(e, nodeHit, simple) {
   e.preventDefault();
   const world = mouseToWorld(e);
   menu.dataset.wx = world.x; menu.dataset.wy = world.y;
@@ -1520,9 +1520,15 @@ function showMenu(e, nodeHit) {
   const islandHit = (nodeHit || lineHit) ? null : hitIsland(world.x, world.y);
 
   if (nodeHit && nodeHit.type !== 'junction') {
-    addMenuItem('Open settings', 'open-settings');
-    addMenuSeparator();
-    addMenuItem('Delete', 'delete-node');
+    if (simple) {
+      addMenuItem('New connection', 'new-connection');
+      addMenuSeparator();
+      addMenuItem('Delete', 'delete-node');
+    } else {
+      addMenuItem('Open settings', 'open-settings');
+      addMenuSeparator();
+      addMenuItem('Delete', 'delete-node');
+    }
   } else if (nodeHit) {
     addMenuItem('Delete', 'delete-node');
   } else if (lineHit) {
@@ -1561,7 +1567,7 @@ function hideMenu() { menu.classList.add('hidden'); }
 
 // ─── Events ────────────────────────────────────────────────────────────
 
-canvas.addEventListener('contextmenu', (e) => { showMenu(e, hitNode(mouseToWorld(e).x, mouseToWorld(e).y)); });
+canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); });
 
 document.addEventListener('keydown', (e) => {
   if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); if (!state.spaceDown) { state.spaceDown = true; updateCursor(); } }
@@ -1571,6 +1577,22 @@ document.addEventListener('keyup', (e) => {
 });
 
 canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 2) {
+    hideMenu();
+    const world = mouseToWorld(e), hit = hitNode(world.x, world.y);
+    ptr.downWorld = world;
+    ptr.downScreen = mouseToScreen(e);
+    ptr.downTime = Date.now();
+    ptr.rightButton = true;
+    ptr.isPanning = false;
+    ptr.isDragging = false;
+    ptr.moved = false;
+    ptr._panOffsetX = e.clientX - state.view.x;
+    ptr._panOffsetY = e.clientY - state.view.y;
+    ptr.downNodeId = hit ? hit.id : null;
+    ptr.downNodeType = hit ? hit.type : null;
+    return;
+  }
   if (e.button !== 0) return;
   hideMenu();
   const world = mouseToWorld(e), screen = mouseToScreen(e), hit = hitNode(world.x, world.y);
@@ -1593,6 +1615,7 @@ canvas.addEventListener('mousedown', (e) => {
   ptr.downWorld = world; ptr.downScreen = screen; ptr.downTime = Date.now();
   ptr.downNodeId = hit ? hit.id : null;
   ptr.isDragging = false; ptr.isPanning = false; ptr.isSelecting = false; ptr.moved = false;
+  ptr.rightButton = false;
   if (hit) {
     if (e.ctrlKey || e.metaKey) {
       if (isSelected(hit)) state.selectedNodeIds.delete(hit.id);
@@ -1624,6 +1647,21 @@ canvas.addEventListener('mousemove', (e) => {
     draw(); return;
   }
 
+  // Right-button panning
+  if (ptr.rightButton && ptr.downWorld) {
+    const d = Math.sqrt(((world.x - ptr.downWorld.x) * state.view.scale)**2 + ((world.y - ptr.downWorld.y) * state.view.scale)**2);
+    if (d > DRAG_THRESHOLD) {
+      ptr.moved = true;
+      ptr.isPanning = true;
+      canvas.style.cursor = 'grabbing';
+      state.view.x = e.clientX - ptr._panOffsetX;
+      state.view.y = e.clientY - ptr._panOffsetY;
+      state.hoverLine = null;
+      draw();
+      return;
+    }
+  }
+
   if (ptr.isDragging) {
     const dx = world.x - ptr.downWorld.x, dy = world.y - ptr.downWorld.y;
     for (const id of state.selectedNodeIds) { const n = state.nodes.find(n => n.id === id); if (n) { n.x += dx; n.y += dy; } }
@@ -1634,7 +1672,7 @@ canvas.addEventListener('mousemove', (e) => {
     state.hoverLine = null; draw(); return;
   }
 
-  if (ptr.downWorld) {
+  if (ptr.downWorld && !ptr.rightButton) {
     const d = Math.sqrt(((world.x - ptr.downWorld.x) * state.view.scale)**2 + ((world.y - ptr.downWorld.y) * state.view.scale)**2);
     if (d > DRAG_THRESHOLD) {
       ptr.moved = true;
@@ -1654,6 +1692,35 @@ canvas.addEventListener('mousemove', (e) => {
 });
 
 canvas.addEventListener('mouseup', (e) => {
+  // Right-button release
+  if (e.button === 2) {
+    if (ptr.isPanning) {
+      ptr.isPanning = false;
+      ptr.rightButton = false;
+      ptr.downWorld = null;
+      canvas.style.cursor = 'default';
+      draw();
+      updateCursor(e);
+      return;
+    }
+    ptr.rightButton = false;
+    // No movement → show context menu
+    const cw = mouseToWorld(e), hit = hitNode(cw.x, cw.y);
+    if (hit && hit.type !== 'junction') {
+      showMenu(e, hit, true);
+    } else if (hit) {
+      showMenu(e, hit, false);
+    } else {
+      const lineHit = findNearestLine(cw.x, cw.y, 15 / state.view.scale);
+      if (lineHit) {
+        showMenu(e, null, false); // shows line menu
+      } else {
+        showMenu(e, null, false); // shows add-node menu
+      }
+    }
+    ptr.downWorld = null;
+    return;
+  }
   if (e.button !== 0) return;
   if (islandDrag) {
     islandDrag = null;
@@ -1706,10 +1773,16 @@ canvas.addEventListener('mouseup', (e) => {
 });
 
 function onDoubleClickNode(hit) {
-  if (state.pendingSourceId === hit.id) { state.pendingSourceId = null; state.selectedNodeIds = new Set(); }
-  else { state.pendingSourceId = hit.id; state.selectedNodeIds = new Set([hit.id]); }
-  state.selectedConnIds = new Set();
-  draw();
+  if (hit.type === 'junction') {
+    // Junction: toggle pending connection (old behavior)
+    if (state.pendingSourceId === hit.id) { state.pendingSourceId = null; state.selectedNodeIds = new Set(); }
+    else { state.pendingSourceId = hit.id; state.selectedNodeIds = new Set([hit.id]); }
+    state.selectedConnIds = new Set();
+    draw();
+  } else {
+    // Gen/load/storage: open settings panel
+    openSettings(hit.id);
+  }
 }
 
 canvas.addEventListener('wheel', (e) => {
@@ -1733,7 +1806,12 @@ menu.addEventListener('click', (e) => {
   const a = item.dataset.action, wx = parseFloat(menu.dataset.wx), wy = parseFloat(menu.dataset.wy), id = menu.dataset.nodeId;
   const netId = menu.dataset.netId;
   const connId = menu.dataset.connId;
-  if (a === 'add-generator') addNode('generator', wx, wy);
+  if (a === 'new-connection' && id) {
+    state.pendingSourceId = id;
+    state.selectedNodeIds = new Set([id]);
+    state.selectedConnIds = new Set();
+    draw();
+  } else if (a === 'add-generator') addNode('generator', wx, wy);
   else if (a === 'add-load') addNode('load', wx, wy);
   else if (a === 'add-storage') addNode('storage', wx, wy);
   else if (a === 'add-junction') addNode('junction', wx, wy);
