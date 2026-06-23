@@ -107,20 +107,25 @@ function simTick() {
 
   // --- Step 4: AGC (aFRR / secondary control) ---
   // Slowly adjusts agcOffset to restore 50 Hz.
-  // Distribution proportional to aFRR headroom (max possible upward headroom).
+  // Distribution proportional to aFRR upward headroom.
+  // Rate-limited per gen (5 MW/s) to prevent windup/oscillation.
   const balancingGens = gens.filter(g => g.mode === 'balancing');
   const freqErr = f0 - state.frequency;
   const agcDeadband = 0.02; // Hz
   if (balancingGens.length > 0 && Math.abs(freqErr) > agcDeadband) {
+    const agcRateLimit = 5; // MW/s per gen — slow, matches real AGC speed
+    const maxDelta = agcRateLimit * dt;
     const totalHeadroom = balancingGens.reduce((s, g) => s + Math.max(0, (g.afrrMax !== undefined ? g.afrrMax : (g.rating || 100)) - (g.baselineContract || 0) - (g.fcrHeadroom || 10)), 0);
     if (totalHeadroom > 0) {
-      const totalAgc = 50 * freqErr * dt; // MW of total AGC correction this tick
+      const totalAgc = 50 * freqErr * dt; // total desired correction this tick
       for (const gen of balancingGens) {
         const upwardHeadroom = Math.max(0, (gen.afrrMax !== undefined ? gen.afrrMax : (gen.rating || 100)) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10));
         const share = upwardHeadroom / totalHeadroom;
         const agcDelta = totalAgc * share;
-        if (Math.abs(agcDelta) > 0.0001) {
-          gen.agcOffset = (gen.agcOffset || 0) + agcDelta;
+        // Rate-limit per-gen to prevent windup/oscillation
+        const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
+        if (Math.abs(clamped) > 0.0001) {
+          gen.agcOffset = (gen.agcOffset || 0) + clamped;
         }
       }
     }
@@ -179,6 +184,8 @@ function simTick() {
         entry.nodes[node.id].rating = node.rating || 100;
         entry.nodes[node.id].droop = node.droop || 0.04;
         entry.nodes[node.id].fcrHeadroom = node.fcrHeadroom || 10;
+        entry.nodes[node.id].afrrMin = node.afrrMin || 0;
+        entry.nodes[node.id].afrrMax = node.afrrMax !== undefined ? node.afrrMax : (node.rating || 100);
         entry.nodes[node.id].turbineTimeConstant = node.turbineTimeConstant || 1;
       }
     }
