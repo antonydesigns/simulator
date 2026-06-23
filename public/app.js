@@ -13,6 +13,8 @@ const state = {
   clipboard: null, // { nodes: [...copied nodes...], connections: [...] }
 };
 
+let hoveredIslandId = null;
+let hoveredIslandHeader = false;
 let islandDrag = null; // { netId, startMouseX, startMouseY, origPositions: [{id, x, y}] }
 
 // ─── Island Colors ─────────────────────────────────────────────────────
@@ -40,6 +42,10 @@ const sim = {
 
 function recomputeNetworks() {
   state.networks = findNetworks();
+  // Ensure freqPrev is initialized for all networks
+  for (const net of state.networks) {
+    if (net.freqPrev === undefined) net.freqPrev = net.freq || 50;
+  }
 }
 
 function simTick() {
@@ -47,7 +53,7 @@ function simTick() {
   const f0 = 50;
   const dt = 1 / sim.tickHz;
 
-  for (const net of networks) {
+  for (const net of state.networks) {
     const freq = net.freq;
     const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
     const gens = netNodes.filter(n => n.type === 'generator');
@@ -118,12 +124,14 @@ function simTick() {
 
     // --- Step 3: Swing equation ---
     if (gens.length > 0) {
+      net.freqPrev = net.freq;
       let totalInertiaEnergy = 0;
       for (const gen of gens) totalInertiaEnergy += (gen.inertia || 5) * (gen.rating || 100);
       let dfdt = 0;
       if (totalInertiaEnergy > 0) dfdt = (imbalance * f0) / (2 * totalInertiaEnergy);
       net.freq = Math.max(45, Math.min(55, freq + dfdt * dt));
     } else {
+      net.freqPrev = net.freq;
       // No gens — frequency decays toward 0 (load can't be served)
       net.freq = Math.max(0, freq - 10 * dt);
     }
@@ -275,7 +283,7 @@ function restartSim() {
   }
   state.frequency = 50;
   state.networks = findNetworks();
-  for (const net of state.networks) net.freq = 50;
+  for (const net of state.networks) { net.freq = 50; net.freqPrev = 50; }
   draw();
   updateControls();
   updateStatsPanel();
@@ -568,6 +576,8 @@ function draw() {
 
 function drawIslands() {
   const nets = state.networks || [];
+  const isHovered = id => id === hoveredIslandId || id === selectedNetworkId;
+
   for (const net of nets) {
     const bb = net.boundingBox;
     if (!bb || bb.w < 1 || bb.h < 1) continue;
@@ -575,41 +585,56 @@ function drawIslands() {
     const tl = worldToScreen(bb.x, bb.y);
     const br = worldToScreen(bb.x + bb.w, bb.y + bb.h);
     const w = br.x - tl.x, h = br.y - tl.y;
-    // Don't draw if off-screen
     if (br.x < -200 || br.y < -200 || tl.x > window.innerWidth + 200 || tl.y > window.innerHeight + 200) continue;
 
-    const isSelected = net.id === selectedNetworkId;
     const color = net.color || ISLAND_COLORS[0];
+    const showFull = isHovered(net.id);
+    const headerH = 28;
 
-    // Background fill
-    ctx.fillStyle = color + (isSelected ? '15' : '0a');
-    ctx.strokeStyle = isSelected ? color : color + '50';
-    ctx.lineWidth = isSelected ? 2.5 : 1.5;
-    ctx.setLineDash(isSelected ? [] : [4, 4]);
-    ctx.beginPath(); roundRectCtx(ctx, tl.x, tl.y, w, h, 14); ctx.fill(); ctx.stroke();
-    ctx.setLineDash([]);
+    if (showFull) {
+      // Full bounding box: fill + outline
+      ctx.fillStyle = color + '0d';
+      ctx.strokeStyle = color + '50';
+      ctx.lineWidth = net.id === selectedNetworkId ? 2.5 : 1.5;
+      ctx.setLineDash(net.id === selectedNetworkId ? [] : [4, 4]);
+      ctx.beginPath(); roundRectCtx(ctx, tl.x, tl.y, w, h, 14); ctx.fill(); ctx.stroke();
+      ctx.setLineDash([]);
+    }
 
-    // Header bar
-    const headerH = 30;
+    // Header bar (always drawn)
     ctx.fillStyle = color + '25';
-    ctx.beginPath(); roundRectCtx(ctx, tl.x, tl.y, w, headerH, { tl: 14, tr: 14, bl: 0, br: 0 }); ctx.fill();
-    ctx.strokeStyle = color + '40'; ctx.lineWidth = 1;
-    ctx.beginPath(); roundRectCtx(ctx, tl.x, tl.y, w, headerH, { tl: 14, tr: 14, bl: 0, br: 0 }); ctx.stroke();
+    ctx.beginPath(); roundRectCtx(ctx, tl.x, tl.y, w, headerH, 14); ctx.fill();
 
-    // Island name
-    ctx.fillStyle = isSelected ? color : '#555';
-    ctx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    const label = net.customName || net.id;
-    const prefix = isSelected ? '▶ ' : '🏝 ';
-    ctx.fillText(prefix + label, tl.x + 10, tl.y + headerH / 2);
+    // Name + frequency label
+    const label = (net.id === selectedNetworkId ? '▶ ' : '🏝 ') + (net.customName || net.id);
+    const freq = net.freq !== undefined ? net.freq.toFixed(2) : '—';
 
-    // Node count badge
-    ctx.fillStyle = '#999';
-    ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+    // Figure out direction arrow
+    let arrow = '';
+    if (net.freqPrev !== undefined && net.freq !== undefined) {
+      const diff = net.freq - net.freqPrev;
+      if (diff > 0.005) arrow = '▲';
+      else if (diff < -0.005) arrow = '▼';
+      else arrow = '▸';
+    }
+
+    const freqLabel = freq + ' Hz ' + arrow;
+
+    ctx.textBaseline = 'middle';
+
+    // Name on left
+    ctx.fillStyle = '#444';
+    ctx.font = '12px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, tl.x + 10, tl.y + headerH / 2);
+
+    // Frequency + arrow on right
+    const dev = (net.freq || 50) - 50;
+    const freqColor = Math.abs(dev) > 0.3 ? '#c0392b' : (Math.abs(dev) > 0.1 ? '#d4891a' : '#5a7a5a');
+    ctx.fillStyle = freqColor;
+    ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
     ctx.textAlign = 'right';
-    const count = net.nodeIds.size;
-    ctx.fillText(count + ' node' + (count !== 1 ? 's' : ''), tl.x + w - 10, tl.y + headerH / 2);
+    ctx.fillText(freqLabel, tl.x + w - 10, tl.y + headerH / 2);
   }
 }
 
@@ -704,7 +729,7 @@ function computeBoundingBox(net) {
     if (n.x > maxX) maxX = n.x;
     if (n.y > maxY) maxY = n.y;
   }
-  const pad = 60;
+  const pad = 30;
   return { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 };
 }
 
@@ -1020,6 +1045,11 @@ canvas.addEventListener('mousemove', (e) => {
       ptr.isSelecting = true; draw(); return;
     }
   }
+
+  // Detect island hover
+  const islandHit = hitIsland(world.x, world.y);
+  hoveredIslandId = islandHit ? islandHit.net.id : null;
+  hoveredIslandHeader = islandHit ? islandHit.isHeader : false;
 
   state.hoverLine = findNearestLine(world.x, world.y, 15 / state.view.scale);
   draw(); updateCursor(e);
