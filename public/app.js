@@ -197,6 +197,7 @@ function simTick() {
   }
 
   if (changed) draw();
+  if (freqChartVisible) drawFreqChart();
 }
 
 function startSim() {
@@ -1117,6 +1118,108 @@ function updateStatsPanel() {
   body.innerHTML = html;
 }
 
+// ─── Frequency Chart ──────────────────────────────────────────
+
+let freqChartVisible = false;
+
+function drawFreqChart() {
+  const canvas = document.getElementById('freq-chart-canvas');
+  if (!canvas || !freqChartVisible) return;
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const w = rect.width, h = rect.height;
+  const pad = { top: 10, right: 12, bottom: 22, left: 36 };
+  const pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
+
+  // Clear
+  ctx.fillStyle = '#f5f3ee';
+  ctx.fillRect(0, 0, w, h);
+
+  // Data
+  const data = sim.dataBuffer;
+  if (data.length < 2) return;
+
+  // Determine Y range — pad by 1 Hz above/below min/max
+  let minF = 50, maxF = 50;
+  for (const d of data) {
+    if (d.frequency < minF) minF = d.frequency;
+    if (d.frequency > maxF) maxF = d.frequency;
+  }
+  // Clamp to sensible range and add padding
+  minF = Math.max(45, Math.min(49, minF - 0.5));
+  maxF = Math.min(55, Math.max(51, maxF + 0.5));
+  const fRange = maxF - minF || 1;
+
+  // Draw grid lines
+  ctx.strokeStyle = '#e0dcd2';
+  ctx.lineWidth = 1;
+  for (let f = Math.ceil(minF); f <= Math.floor(maxF); f++) {
+    const y = pad.top + ph - ((f - minF) / fRange) * ph;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(w - pad.right, y); ctx.stroke();
+    ctx.fillStyle = '#8a867e';
+    ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(f + ' Hz', pad.left - 4, y);
+  }
+
+  // Draw 50 Hz reference line (thicker)
+  {
+    const y50 = pad.top + ph - ((50 - minF) / fRange) * ph;
+    ctx.strokeStyle = '#5a7a5a';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(pad.left, y50); ctx.lineTo(w - pad.right, y50); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#5a7a5a';
+    ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('50 Hz', w - pad.right + 4, y50);
+  }
+
+  // Draw frequency line
+  const maxT = data[data.length - 1].t;
+  const minT = Math.max(0, maxT - 60); // Show last 60 seconds
+  const tRange = maxT - minT || 1;
+
+  ctx.strokeStyle = '#2c6b9e';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < data.length; i++) {
+    const d = data[i];
+    if (d.t < minT) continue;
+    const x = pad.left + ((d.t - minT) / tRange) * pw;
+    const y = pad.top + ph - ((d.frequency - minF) / fRange) * ph;
+    if (!started) { ctx.moveTo(x, y); started = true; }
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Time labels
+  ctx.fillStyle = '#8a867e';
+  ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let t = Math.ceil(minT / 10) * 10; t <= maxT; t += 10) {
+    const x = pad.left + ((t - minT) / tRange) * pw;
+    ctx.fillText(t + 's', x, h - pad.bottom + 6);
+  }
+
+  // Current frequency marker at end
+  if (data.length > 0) {
+    const last = data[data.length - 1];
+    const lx = pw + pad.left;
+    const ly = pad.top + ph - ((last.frequency - minF) / fRange) * ph;
+    ctx.fillStyle = '#2c6b9e';
+    ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
 document.getElementById('stats-btn').addEventListener('click', () => {
   statsPanelVisible = !statsPanelVisible;
   document.getElementById('stats-panel').classList.toggle('hidden');
@@ -1132,6 +1235,36 @@ document.getElementById('stats-close-btn').addEventListener('click', () => {
 document.getElementById('stats-panel').addEventListener('mousedown', (e) => {
   if (e.target.closest('.stats-header') && !e.target.closest('.stats-close')) {
     const panel = document.getElementById('stats-panel');
+    dragPanel = panel;
+    dragOff = { x: e.clientX - panel.offsetLeft, y: e.clientY - panel.offsetTop };
+    panel.style.zIndex = Date.now();
+    e.preventDefault();
+  }
+});
+
+// ─── Frequency Chart ──────────────────────────────────────────
+
+// Detect clicks on the frequency HUD
+canvas.addEventListener('click', (e) => {
+  const screen = mouseToScreen(e);
+  const pad = 14, bw = 170, bh = 48;
+  const rx = window.innerWidth - bw - pad, ry = pad;
+  if (screen.x >= rx && screen.x <= rx + bw && screen.y >= ry && screen.y <= ry + bh) {
+    freqChartVisible = !freqChartVisible;
+    document.getElementById('freq-chart-panel').classList.toggle('hidden', !freqChartVisible);
+    if (freqChartVisible) drawFreqChart();
+  }
+});
+
+document.getElementById('freq-chart-close-btn').addEventListener('click', () => {
+  freqChartVisible = false;
+  document.getElementById('freq-chart-panel').classList.add('hidden');
+});
+
+// Make chart panel draggable
+document.getElementById('freq-chart-panel').addEventListener('mousedown', (e) => {
+  if (e.target.closest('.freq-chart-header') && !e.target.closest('.freq-chart-close')) {
+    const panel = document.getElementById('freq-chart-panel');
     dragPanel = panel;
     dragOff = { x: e.clientX - panel.offsetLeft, y: e.clientY - panel.offsetTop };
     panel.style.zIndex = Date.now();

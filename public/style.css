@@ -577,3 +577,62 @@ html, body {
   color: #b8860b;
   margin-left: 4px;
 }
+
+/* ─── Frequency Chart Panel ─────────────────────────────────── */
+
+.freq-chart-panel {
+  position: fixed;
+  bottom: 14px;
+  right: 14px;
+  width: 440px;
+  height: 220px;
+  background: rgba(245, 243, 238, 0.96);
+  border: 1px solid #d6d2c8;
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.freq-chart-panel.hidden {
+  display: none;
+}
+
+.freq-chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #f0ede6;
+  border-bottom: 1px solid #e0dcd2;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: grab;
+  user-select: none;
+}
+
+.freq-chart-header:active {
+  cursor: grabbing;
+}
+
+.freq-chart-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: #888;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.freq-chart-close:hover {
+  color: #333;
+}
+
+#freq-chart-canvas {
+  width: 100%;
+  flex: 1;
+  display: block;
+}
