@@ -292,33 +292,42 @@ function restartSim() {
 // ─── Grid Balancing ────────────────────────────────────────────────────
 
 function balanceGrid() {
-  // Distribute total load demand across flexible generators by rating share.
-  // Fixed-mode gens keep their current dispatchTarget — only remaining
-  // demand is distributed. This ensures the grid starts in a steady state.
-  const nodes = state.nodes;
-  const loads = nodes.filter(n => n.type === 'load');
-  const gens = nodes.filter(n => n.type === 'generator');
-  if (!loads.length || !gens.length) return;
+  // Balance supply with demand per island.
+  // Each island's flexible generators share that island's load proportionally by rating.
+  const nets = findNetworks();
+  if (!nets.length) return;
 
-  const totalDemand = loads.reduce((sum, n) => sum + (n.mw || 0), 0);
-  const fixedGens = gens.filter(g => g.mode === 'fixed');
-  const flexGens = gens.filter(g => g.mode !== 'fixed');
+  // First reset all gen baselines to 0
+  for (const gen of state.nodes.filter(n => n.type === 'generator')) {
+    gen.baselineContract = 0;
+    gen.agcOffset = 0;
+  }
 
-  // Fixed gens keep what they have
-  const fixedSupply = fixedGens.reduce((sum, g) => sum + Math.min(g.dispatchTarget || 0, g.rating || Infinity), 0);
-  const remaining = Math.max(0, totalDemand - fixedSupply);
-  const totalRating = flexGens.reduce((sum, g) => sum + (g.rating || 100), 0);
+  for (const net of nets) {
+    const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+    const loads = netNodes.filter(n => n.type === 'load');
+    const gens = netNodes.filter(n => n.type === 'generator');
+    if (!loads.length || !gens.length) continue;
 
-  if (totalRating > 0) {
-    for (const gen of flexGens) {
-      const share = (gen.rating || 100) / totalRating;
-      gen.baselineContract = Math.min(Math.round(remaining * share * 10) / 10, gen.rating || Infinity);
-      gen.agcOffset = 0;
-      gen.mw = gen.baselineContract;
+    const totalDemand = loads.reduce((sum, n) => sum + (n.mw || 0), 0);
+    const fixedGens = gens.filter(g => g.mode === 'fixed');
+    const flexGens = gens.filter(g => g.mode !== 'fixed');
+
+    const fixedSupply = fixedGens.reduce((sum, g) => sum + Math.min(g.dispatchTarget || 0, g.rating || Infinity), 0);
+    const remaining = Math.max(0, totalDemand - fixedSupply);
+    const totalRating = flexGens.reduce((sum, g) => sum + (g.rating || 100), 0);
+
+    if (totalRating > 0 && remaining > 0) {
+      for (const gen of flexGens) {
+        const share = (gen.rating || 100) / totalRating;
+        gen.baselineContract = Math.min(Math.round(remaining * share * 10) / 10, gen.rating || Infinity);
+        gen.mw = gen.baselineContract;
+      }
     }
   }
 
   // Update the UI
+  recomputeNetworks();
   draw();
   updateStatsPanel();
 }
