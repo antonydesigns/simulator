@@ -188,7 +188,7 @@ function simTick() {
       (s.dischargeRate || 50) > 0 // has physical discharge capacity
     );
     if (hasGen && !hasLoad && !hasStor) {
-      for (const gen of gens) gen.mw = Math.max(0, (gen.mw || 0) - 50 * dt);
+      for (const gen of gens) gen.mw = 0;
       for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
     }
@@ -200,6 +200,13 @@ function simTick() {
     // Storage-only island (disconnected by tripped lines): no response, nominal freq
     if (!hasGen && !hasLoad && hasStor) {
       for (const st of storages) { st.mwResponse = 0; }
+      for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
+      net.freq = f0; continue;
+    }
+    // Gen + storage island with no load — no demand to serve
+    if (hasGen && !hasLoad && hasStor) {
+      for (const gen of gens) gen.mw = 0;
+      for (const st of storages) st.mwResponse = 0;
       for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
     }
