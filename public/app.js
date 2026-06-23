@@ -32,22 +32,35 @@ function simTick() {
   const dt = 1 / sim.tickHz;
   const f0 = 50;
 
-  // --- Step 1: Governor droop (instant primary response) ---
-  // Merchant-locked gens: fixed output, no frequency response.
-  // Balancing gens: mw = baseSetpoint + govMod
-  // govMod = -(1/droop) × ((f-f0)/f0) × rating  (+ when low freq, - when high)
-  // Both are capped at rating — a 100 MVA gen cannot output 150 MW.
+  // --- Step 1: Governor droop + ramp-limited power output ---
+  // Each generator's output is rate-limited by rampRate (MW/s).
+  // Target for balancing gens: _baseSetpoint + FCR governor response.
+  // Target for merchant-locked gens: dispatchTarget (fixed, no FCR).
+  // All physical changes (FCR, schedule following, AGC) compete for the
+  // same ramp headroom — the turbine can only change output so fast.
   for (const gen of gens) {
     const maxMw = gen.rating || Infinity;
+    const rampRate = gen.rampRate || 5;
+    const maxDelta = rampRate * dt;
+    let targetMw;
+
     if (gen.merchantLock) {
-      gen.mw = Math.min(gen.dispatchTarget || gen._baseSetpoint || 0, maxMw);
+      targetMw = Math.min(gen.dispatchTarget || gen._baseSetpoint || 0, maxMw);
     } else {
       const droop = gen.droop || 0.04;
       const rating = gen.rating || 100;
       const base = gen._baseSetpoint || 0;
       const dev = (state.frequency - f0) / f0;
       const govMod = -(1 / droop) * dev * rating;
-      gen.mw = Math.min(Math.max(0, base + govMod), maxMw);
+      targetMw = Math.min(Math.max(0, base + govMod), maxMw);
+    }
+
+    // Rate-limit: physical output can only change by rampRate per second
+    const current = gen.mw || 0;
+    const diff = targetMw - current;
+    const delta = Math.max(-maxDelta, Math.min(maxDelta, diff));
+    if (Math.abs(delta) > 0.0001) {
+      gen.mw = current + delta;
     }
   }
 

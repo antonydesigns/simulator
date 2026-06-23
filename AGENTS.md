@@ -33,11 +33,12 @@ npm run index       # manually rebuild codebase-index.json
 
 Five-step loop running at 10 Hz:
 
-### Step 1 — Governor droop (FCR / primary control)
-Instant frequency response per generator:
-- **Balancing gens**: `mw = baseSetpoint - (1/droop) × ((f-f₀)/f₀) × rating`
-- **Merchant-locked gens**: output fixed at `dispatchTarget`, no frequency response
-- Both capped at `rating` (MVA)
+### Step 1 — Governor droop + ramp-limited power output (FCR / primary control)
+Each generator calculates a target MW, then rate-limits actual output toward it:
+- **Balancing gens**: target = `_baseSetpoint + govMod` where `govMod = -(1/droop) × ((f-f₀)/f₀) × rating`
+- **Merchant-locked gens**: target = `dispatchTarget` (fixed, no frequency response)
+- Target is capped at `rating` (MVA)
+- Actual `gen.mw` moves toward target at `rampRate` (MW/s) — same physical limit that governs schedule following and AGC
 
 ### Step 2 — Storage response
 Batteries charge from surplus (absorb excess MW) or discharge into deficit, rate-limited by `chargeRate` / `dischargeRate` and bounded by `maxCapacity` (state of charge in MWh).
@@ -85,7 +86,7 @@ Panels are draggable, resizable, and independently scrollable.
 - Frequency: 50 Hz nominal, clamped 45–55 Hz
 - Default droop: 4% (governor speed droop)
 - Default inertia: 5 s per generator
-- Default ramp rate: 5 MW/s
+- Default ramp rate: 5 MW/s — governs ALL output changes (FCR, schedule following, AGC)
 - Default rating: 100 MVA
 
 ## API
