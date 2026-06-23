@@ -391,12 +391,10 @@ function drawNodes() {
     ctx.font = `${ls}px -apple-system, BlinkMacSystemFont, sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
 
-    let label;
-    if (node.type === 'generator') label = 'G';
-    else if (node.type === 'storage') label = 'S';
-    else if (node.type === 'junction') label = 'J';
-    else label = 'L';
-    label += (node.label || node.shortId || node.id.slice(-4));
+    let label = node.shortId || (() => {
+      const t = node.type === 'generator' ? 'G' : node.type === 'storage' ? 'S' : node.type === 'junction' ? 'J' : 'L';
+      return t + (node.label || node.id.slice(-4));
+    })();
     if (node.mode === 'fixed') label += ' 🔒';
     ctx.fillText(label, p.x, p.y + r + 4);
 
