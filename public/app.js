@@ -578,16 +578,16 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   drawGrid(); drawIslands(); drawConnections(); drawNodes(); drawPendingLine(); drawHoverDot(); drawSelectionRect();
-  drawFrequencyHud();
 }
 
 // ─── Islands ──────────────────────────────────────────────────────────
 
 function drawIslands() {
   const nets = state.networks || [];
-  const isHovered = id => id === hoveredIslandId || id === selectedNetworkId;
+  const isHovered = id => (id === hoveredIslandId && hoveredIslandHeader) || id === selectedNetworkId;
 
   for (const net of nets) {
+    if (!net.valid) continue;
     const bb = net.boundingBox;
     if (!bb || bb.w < 1 || bb.h < 1) continue;
 
@@ -775,9 +775,13 @@ function findNetworks() {
   const oldNets = state.networks || [];
   const newNets = [];
   for (const nodeIds of components) {
+    const netNodes = [...nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+    const hasGen = netNodes.some(n => n.type === 'generator');
+    const hasLoad = netNodes.some(n => n.type === 'load');
     const match = oldNets.find(o => o.nodeIds && setsEqual(o.nodeIds, nodeIds));
     const net = match || { id: 'net_' + newNets.length, freq: 50, color: ISLAND_COLORS[newNets.length % ISLAND_COLORS.length] };
     net.nodeIds = nodeIds;
+    net.valid = hasGen && hasLoad;
     net.boundingBox = computeBoundingBox(net);
     if (!match) net.customName = null;
     newNets.push(net);
@@ -922,6 +926,7 @@ function hitIsland(wx, wy) {
   const nets = state.networks || [];
   // Check from top (last drawn) to bottom
   for (let i = nets.length - 1; i >= 0; i--) {
+    if (!nets[i].valid) continue;
     const bb = nets[i].boundingBox;
     if (!bb) continue;
     const headerH = 30;
@@ -1779,38 +1784,14 @@ document.getElementById('stats-panel').addEventListener('mousedown', (e) => {
 canvas.addEventListener('click', (e) => {
   const screen = mouseToScreen(e);
 
-  // Check HUD box click (toggle chart + select island)
-  const nets = state.networks && state.networks.length > 0 ? state.networks : [{ id: 'net_0' }];
-  const pad = 14, bw = 170, bh = 48;
-  const rx = window.innerWidth - bw - pad;
-  let ry = pad;
-  let hitHud = false;
-  for (let i = 0; i < Math.max(1, nets.length); i++) {
-    if (screen.x >= rx && screen.x <= rx + bw && screen.y >= ry && screen.y <= ry + bh) {
-      // Select this island
-      if (nets[i].id) {
-        selectedNetworkId = nets[i].id;
-        if (statsPanelVisible) updateStatsPanel();
-      }
-      // Toggle chart
-      freqChartVisible = !freqChartVisible;
-      document.getElementById('freq-chart-panel').classList.toggle('hidden', !freqChartVisible);
-      if (freqChartVisible) drawFreqChart();
-      hitHud = true;
-      break;
-    }
-    ry += bh + 4;
-  }
-  if (hitHud) { e.stopPropagation(); draw(); return; }
-
-  // Check island click (select island — header or body)
+  // Check island header click (select island)
   const world = mouseToWorld(e);
   const islandHit = hitIsland(world.x, world.y);
-  if (islandHit) {
+  if (islandHit && islandHit.isHeader) {
     selectedNetworkId = islandHit.net.id;
     if (statsPanelVisible) updateStatsPanel();
     draw();
-  } else if (!hitNode(world.x, world.y)) {
+  } else if (!hitNode(world.x, world.y) && !islandHit) {
     // Click on empty canvas — deselect island, clean view
     if (selectedNetworkId !== 'all') {
       selectedNetworkId = 'all';
