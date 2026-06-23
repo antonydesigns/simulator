@@ -108,24 +108,28 @@ function simTick() {
   // --- Step 4: AGC (aFRR / secondary control) ---
   // Slowly adjusts agcOffset to restore 50 Hz.
   // Distribution proportional to aFRR upward headroom.
-  // Rate-limited per gen (5 MW/s) to prevent windup/oscillation.
+  // Rate-limited per gen (5 MW/s) + anti-windup: only accumulate if
+  // gen.mw has tracked to ≥70% of the already-commanded offset.
   const balancingGens = gens.filter(g => g.mode === 'balancing');
   const freqErr = f0 - state.frequency;
-  const agcDeadband = 0.02; // Hz
-  if (balancingGens.length > 0 && Math.abs(freqErr) > agcDeadband) {
-    const agcRateLimit = 5; // MW/s per gen — slow, matches real AGC speed
+  if (balancingGens.length > 0 && Math.abs(freqErr) > 0.02) {
+    const agcRateLimit = 5; // MW/s per gen
     const maxDelta = agcRateLimit * dt;
     const totalHeadroom = balancingGens.reduce((s, g) => s + Math.max(0, (g.afrrMax !== undefined ? g.afrrMax : (g.rating || 100)) - (g.baselineContract || 0) - (g.fcrHeadroom || 10)), 0);
     if (totalHeadroom > 0) {
-      const totalAgc = 50 * freqErr * dt; // total desired correction this tick
+      const totalAgc = 50 * freqErr * dt;
       for (const gen of balancingGens) {
         const upwardHeadroom = Math.max(0, (gen.afrrMax !== undefined ? gen.afrrMax : (gen.rating || 100)) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10));
         const share = upwardHeadroom / totalHeadroom;
         const agcDelta = totalAgc * share;
-        // Rate-limit per-gen to prevent windup/oscillation
         const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
-        if (Math.abs(clamped) > 0.0001) {
-          gen.agcOffset = (gen.agcOffset || 0) + clamped;
+        // Anti-windup: skip if turbine hasn't tracked ≥70% of current offset
+        const currentOffset = gen.agcOffset || 0;
+        const progress = (gen.mw || 0) - (gen.baselineContract || 0);
+        const needsGuard = Math.abs(currentOffset) > 2;
+        const isTracking = !needsGuard || progress / currentOffset >= 0.7;
+        if (Math.abs(clamped) > 0.0001 && isTracking) {
+          gen.agcOffset = currentOffset + clamped;
         }
       }
     }
@@ -1061,16 +1065,19 @@ function updateStatsPanel() {
   html += '<div class="stats-section-title">⚡ Supply</div>';
   for (const gen of gens) {
     const base = gen.baselineContract || 0;
-    const fcr = (gen.mw || 0) - base - (gen.agcOffset || 0);
     const tag = gen.mode === 'fixed' ? '<span class="merchant-tag">🔒</span>' : (gen.mode === 'fcr-only' ? '<span class="merchant-tag">⚡FCR</span>' : '');
     html += '<div class="stats-row">';
     html += '<span><span class="gen-name">' + (gen.shortId || gen.id.slice(-4)) + '</span>' + tag + '</span>';
     html += '<span class="value">' + Math.round(gen.mw || 0) + ' MW</span>';
     html += '</div>';
-    if (Math.abs(fcr) > 0.5) {
+    const dev = (state.frequency - f0) / f0;
+    const govMod = -(1 / (gen.droop || 0.04)) * dev * (gen.rating || 100);
+    const fcrHeadroom = gen.fcrHeadroom || 10;
+    const fcrResponse = Math.max(-fcrHeadroom, Math.min(fcrHeadroom, govMod));
+    const agcComp = gen.agcOffset || 0;
+    if (Math.abs(fcrResponse) > 0.5 || Math.abs(agcComp) > 0.5) {
       html += '<div class="stats-row" style="padding-left:12px;font-size:12px;color:#999;">';
-      const agcComponent = Math.round(gen.agcOffset || 0);
-      html += '<span>base ' + Math.round(base) + ' + FCR ' + (fcr >= 0 ? '+' : '') + Math.round(fcr) + ' + AGC ' + (agcComponent >= 0 ? '+' : '') + agcComponent + '</span>';
+      html += '<span>base ' + Math.round(base) + ' + FCR ' + (fcrResponse >= 0 ? '+' : '') + Math.round(fcrResponse) + ' + AGC ' + (agcComp >= 0 ? '+' : '') + Math.round(agcComp) + '</span>';
       html += '</div>';
     }
   }
