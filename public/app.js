@@ -100,8 +100,13 @@ function simTick() {
 
     // --- Handle stranded island types ---
     const hasGen = gens.length > 0, hasLoad = loads.length > 0, hasStor = storages.length > 0;
-    // A storage with no effective output counts as no supply
-    const hasEffectiveStor = storages.some(s => (s.mwResponse || 0) > 0);
+    // A storage counts as effective supply if it has SoC and can respond
+    // (don't check mwResponse — it hasn't been computed for this tick yet)
+    const hasEffectiveStor = storages.some(s =>
+      (s.mw || 0) > 0.5 && // meaningful SoC (>0.5 MWh)
+      s.mode !== 'fixed' && // responsive mode (balancing or fcr-only)
+      (s.dischargeRate || 50) > 0 // has physical discharge capacity
+    );
     if (hasGen && !hasLoad && !hasStor) {
       for (const gen of gens) gen.mw = Math.max(0, (gen.mw || 0) - 50 * dt);
       for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
