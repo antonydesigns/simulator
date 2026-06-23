@@ -32,17 +32,16 @@ function simTick() {
   const dt = 1 / sim.tickHz;
   const f0 = 50;
 
-  // --- Step 1: Governor droop + ramp-limited power output ---
-  // Each generator's output is rate-limited by rampRate (MW/s).
-  // Target for balancing gens: _baseSetpoint + FCR governor response.
-  // Target for fcr-only gens: _baseSetpoint + FCR (fixed base, no AGC).
-  // Target for fixed gens: dispatchTarget (no FCR, no AGC).
-  // All physical changes (FCR, schedule following, AGC) compete for the
-  // same ramp headroom — the turbine can only change output so fast.
+  // --- Step 1: Governor droop with turbine time constant ---
+  // FCR responds continuously via a first-order turbine lag (timeConstant seconds).
+  // The dispatch ramp rate (rampRate MW/s) is a separate, slower limit for
+  // schedule following and AGC — it does NOT apply to FCR.
+  // Targets:
+  //   balancing gens: _baseSetpoint + FCR govMod
+  //   fcr-only gens:  _baseSetpoint + FCR (fixed base, no AGC)
+  //   fixed gens:     dispatchTarget (no FCR, no AGC)
   for (const gen of gens) {
     const maxMw = gen.rating || Infinity;
-    const rampRate = gen.rampRate || 5;
-    const maxDelta = rampRate * dt;
     let targetMw;
 
     if (gen.mode === 'fixed') {
@@ -56,13 +55,11 @@ function simTick() {
       targetMw = Math.min(Math.max(0, base + govMod), maxMw);
     }
 
-    // Rate-limit: physical output can only change by rampRate per second
+    // First-order turbine lag: smooth continuous response
+    // gen.mw approaches targetMw with timeConstant (default 1 second)
     const current = gen.mw || 0;
-    const diff = targetMw - current;
-    const delta = Math.max(-maxDelta, Math.min(maxDelta, diff));
-    if (Math.abs(delta) > 0.0001) {
-      gen.mw = current + delta;
-    }
+    const T = gen.turbineTimeConstant || 1;
+    gen.mw = current + (targetMw - current) * dt / T;
   }
 
   const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
@@ -195,6 +192,7 @@ function simTick() {
         entry.nodes[node.id].mode = node.mode || 'balancing';
         entry.nodes[node.id].rating = node.rating || 100;
         entry.nodes[node.id].droop = node.droop || 0.04;
+        entry.nodes[node.id].turbineTimeConstant = node.turbineTimeConstant || 1;
       }
     }
     sim.dataBuffer.push(entry);
@@ -546,7 +544,7 @@ function addNode(type, wx, wy) {
   if (type === 'load') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 10 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, dispatchTarget: 0, _baseSetpoint: 0, mode: 'balancing' };
+    node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, dispatchTarget: 0, _baseSetpoint: 0, mode: 'balancing', turbineTimeConstant: 1 };
   } else if (type === 'storage') {
     node = { id: uid(), type, x: wx, y: wy, label: '', mw: 0, chargeRate: 5, dischargeRate: 5, maxCapacity: 100 };
   } else {
@@ -629,6 +627,7 @@ async function load() {
         if (n.droop === undefined) n.droop = 0.04;
         if (n.dispatchTarget === undefined) n.dispatchTarget = 0;
         if (n._baseSetpoint === undefined) n._baseSetpoint = n.mw || 0;
+        if (n.turbineTimeConstant === undefined) n.turbineTimeConstant = 1;
         // Migrate legacy merchantLock → mode
         if (n.merchantLock !== undefined) { n.mode = n.merchantLock ? 'fixed' : 'balancing'; delete n.merchantLock; }
         if (n.mode === undefined) n.mode = 'balancing';
@@ -817,6 +816,7 @@ function openSettings(nodeId) {
         <div class="settings-row"><label class="settings-label">Rating (MVA)</label><div class="settings-slider-group"><input type="range" class="rating-slider" min="10" max="500" step="10" value="${node.rating || 100}"><span class="rating-value">${node.rating || 100}</span></div></div>
         <div class="settings-row"><label class="settings-label">Inertia H (s)</label><div class="settings-slider-group"><input type="range" class="inertia-slider" min="1" max="15" step="0.5" value="${node.inertia || 5}"><span class="inertia-value">${(node.inertia || 5).toFixed(1)}</span></div></div>
         <div class="settings-row"><label class="settings-label">Droop (%)</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="1" max="10" step="0.5" value="${(node.droop || 0.04) * 100}"><span class="droop-value">${((node.droop || 0.04) * 100).toFixed(1)}%</span></div></div>
+        <div class="settings-row"><label class="settings-label">Turbine TC (s)</label><div class="settings-slider-group"><input type="range" class="tc-slider" min="0.2" max="5" step="0.1" value="${node.turbineTimeConstant || 1}"><span class="tc-value">${(node.turbineTimeConstant || 1).toFixed(1)}s</span></div></div>
         <div class="settings-row sep-top"><label class="settings-label">Mode</label><div class="settings-slider-group"><select class="gen-mode-select"><option value="balancing" ${node.mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option><option value="fcr-only" ${node.mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option><option value="fixed" ${node.mode === 'fixed' ? 'selected' : ''}>Fixed</option></select></div></div>
       </div>
       <div class="settings-resize-handle"></div>`;
@@ -856,6 +856,10 @@ function openSettings(nodeId) {
     const drSlider = panel.querySelector('.droop-slider'), drVal = panel.querySelector('.droop-value');
     drSlider.addEventListener('input', () => { const v = parseFloat(drSlider.value); drVal.textContent = v.toFixed(1) + '%'; node.droop = v / 100; });
     drSlider.addEventListener('change', () => persist());
+
+    const tcSlider = panel.querySelector('.tc-slider'), tcVal = panel.querySelector('.tc-value');
+    tcSlider.addEventListener('input', () => { const v = parseFloat(tcSlider.value); tcVal.textContent = v.toFixed(1) + 's'; node.turbineTimeConstant = v; });
+    tcSlider.addEventListener('change', () => persist());
 
     // Mode selector
     const modeSelect = panel.querySelector('.gen-mode-select');

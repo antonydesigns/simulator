@@ -20,7 +20,7 @@ npm run index       # manually rebuild codebase-index.json
 | File | Lines | Purpose |
 |---|---|---|
 | `server.js` | 68 | Express: load/save grid, save snapshots, static serve |
-| `public/app.js` | 1002 | All simulation engine + canvas UI + interaction logic |
+| `public/app.js` | 1051 | All simulation engine + canvas UI + interaction logic |
 | `public/index.html` | 44 | Canvas + controls overlay + stats panel |
 | `public/style.css` | 608 | Dark-theme styling for panels, controls, canvas |
 | `scripts/index-codebase.js` | ~215 | Codebase index generator (auto-runs on commit) |
@@ -33,13 +33,13 @@ npm run index       # manually rebuild codebase-index.json
 
 Five-step loop running at 10 Hz:
 
-### Step 1 — Governor droop + ramp-limited power output (FCR / primary control)
-Each generator calculates a target MW, then rate-limits actual output toward it:
+### Step 1 — Governor droop with turbine time constant (FCR / primary control)
+FCR responds continuously via a first-order turbine lag:
 - **Balancing gens**: target = `_baseSetpoint + govMod` where `govMod = -(1/droop) × ((f-f₀)/f₀) × rating`
-- **Fixed gens**: target = `dispatchTarget` (no FCR, no AGC, output locked)
-- **FCR-only gens**: target = `_baseSetpoint + govMod` (FCR active, but no AGC — dispatch target is fixed)
-- Target is capped at `rating` (MVA)
-- Actual `gen.mw` moves toward target at `rampRate` (MW/s) — same physical limit that governs schedule following and AGC
+- **FCR-only gens**: same FCR, but dispatch target is fixed (no AGC)
+- **Fixed gens**: output = `dispatchTarget` (no FCR, no AGC)
+- Actual `gen.mw` approaches target with a **turbine time constant** (default 1s) instead of a hard rate limit
+- The dispatch `rampRate` (MW/s) is a separate limit for schedule following and AGC — it does NOT apply to FCR
 
 ### Step 2 — Storage response
 Batteries charge from surplus (absorb excess MW) or discharge into deficit, rate-limited by `chargeRate` / `dischargeRate` and bounded by `maxCapacity` (state of charge in MWh).
