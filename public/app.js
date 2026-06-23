@@ -124,7 +124,7 @@ function simTick() {
         const agcDelta = totalAgc * share;
         const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
         if (Math.abs(clamped) > 0.0001) {
-          gen.agcOffset = currentOffset + clamped;
+          gen.agcOffset = (gen.agcOffset || 0) + clamped;
         }
       }
     }
