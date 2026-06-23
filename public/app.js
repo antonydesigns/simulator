@@ -170,7 +170,7 @@ function simTick() {
     const st = state.nodes.find(n => n.id === nodeId && n.type === 'storage');
     if (st) {
       const entry = openPanels[nodeId];
-      if (entry.socEl) entry.socEl.textContent = Math.round(st.mw || 0) + ' MWh';
+      if (entry.socEl) entry.socEl.textContent = (st.mw || 0).toFixed(2) + ' MWh';
       if (entry.mwRespEl) entry.mwRespEl.textContent = (st.mwResponse || 0) >= 0
         ? '+' + Math.round(st.mwResponse || 0) + ' MW'
         : Math.round(st.mwResponse || 0) + ' MW';
@@ -452,7 +452,7 @@ function drawNodes() {
         const mwResp = node.mwResponse || 0;
         const pw = mwResp >= 0 ? '+' : '';
         ctx.fillText(pw + Math.round(mwResp) + ' MW', p.x, p.y + r + 4 + ls + 2);
-        ctx.fillText(Math.round(node.mw) + ' MWh', p.x, p.y + r + 4 + ls * 2 + 4);
+        ctx.fillText((node.mw || 0).toFixed(2) + ' MWh', p.x, p.y + r + 4 + ls * 2 + 4);
       } else {
         ctx.fillText(Math.round(node.mw) + ' MW', p.x, p.y + r + 4 + ls + 2);
       }
@@ -1091,7 +1091,7 @@ function openSettings(nodeId) {
     panel.innerHTML = `
       <div class="settings-header"><span class="settings-title">Storage ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
-        <div class="settings-row"><label class="settings-label">State of Charge</label><div class="settings-slider-group"><input type="range" class="soc-slider" min="0" max="${cap}" step="1" value="${socVal}"><span class="settings-value-display storage-soc">${socVal} MWh</span></div></div>
+        <div class="settings-row"><label class="settings-label">State of Charge</label><div class="settings-slider-group"><input type="range" class="soc-slider" min="0" max="${cap}" step="0.1" value="${socVal}"><span class="settings-value-display storage-soc">${socVal} MWh</span></div></div>
         <div class="settings-row"><label class="settings-label">Power</label><div class="settings-value-display storage-mw-response">0 MW</div></div>
         <div class="settings-row sep-top"><label class="settings-label">Mode</label>
           <div class="settings-slider-group">
@@ -1123,7 +1123,7 @@ function openSettings(nodeId) {
 
     // SoC slider
     const socSlider = panel.querySelector('.soc-slider');
-    socSlider.addEventListener('input', () => { const v = parseInt(socSlider.value, 10); node.mw = Math.min(v, node.maxCapacity || 100); entry.socEl.textContent = v + ' MWh'; });
+    socSlider.addEventListener('input', () => { const v = parseFloat(socSlider.value); node.mw = Math.min(v, node.maxCapacity || 100); entry.socEl.textContent = v.toFixed(2) + ' MWh'; });
     socSlider.addEventListener('change', () => persist());
 
     // Mode select
@@ -1170,7 +1170,7 @@ function openSettings(nodeId) {
 
     // Capacity slider
     const capSlider = panel.querySelector('.capacity-slider'), capV = panel.querySelector('.capacity-value');
-    capSlider.addEventListener('input', () => { const v = parseInt(capSlider.value, 10); capV.textContent = v + ' MWh'; node.maxCapacity = v; if (node.mw > v) { node.mw = v; entry.socEl.textContent = v + ' MWh'; socSlider.max = v; } });
+    capSlider.addEventListener('input', () => { const v = parseInt(capSlider.value, 10); capV.textContent = v + ' MWh'; node.maxCapacity = v; if (node.mw > v) { node.mw = v; entry.socEl.textContent = v.toFixed(2) + ' MWh'; socSlider.max = v; } });
     capSlider.addEventListener('change', () => persist());
 
   } else {
@@ -1292,7 +1292,7 @@ function updateStatsPanel() {
       const mw = st.mwResponse || 0;
       const dir = mw > 0.5 ? 'discharge' : (mw < -0.5 ? 'charge' : 'idle');
       html += '<div class="stats-row"><span>' + (st.shortId || st.id.slice(-4)) + tag + ' (' + dir + ')</span><span class="value">' + (mw >= 0 ? '+' : '') + Math.round(mw) + ' MW</span></div>';
-      html += '<div style="padding-left:12px;font-size:12px;color:#999;">SoC: ' + Math.round(st.mw || 0) + '/' + Math.round(st.maxCapacity || 100) + ' MWh</div>';
+      html += '<div style="padding-left:12px;font-size:12px;color:#999;">SoC: ' + (st.mw || 0).toFixed(2) + '/' + Math.round(st.maxCapacity || 100) + ' MWh</div>';
     }
     html += '<div class="stats-row total"><span>Net storage</span><span class="value">' + (totalStor >= 0 ? '+' : '') + Math.round(totalStor) + ' MW</span></div>';
     html += '</div>';
