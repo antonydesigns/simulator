@@ -154,9 +154,14 @@ function simTick() {
       let dfdt = 0;
       if (totalInertiaEnergy > 0) dfdt = (imbalance * f0) / (2 * totalInertiaEnergy);
       net.freq = Math.max(45, Math.min(55, freq + dfdt * dt));
+    } else if (storages.length > 0) {
+      // Storage-only island: freq sustained by storage response
+      net.freqPrev = net.freq;
+      const stoInertia = storages.reduce((s, st) => s + ((st.mw || 0) > 0.5 ? 0.5 : 0), 0); // small synthetic inertia
+      let dfdt = stoInertia > 0 ? (imbalance * f0) / (2 * stoInertia) : 0;
+      net.freq = Math.max(45, Math.min(55, freq + dfdt * dt));
     } else {
       net.freqPrev = net.freq;
-      // No gens — frequency decays toward 0 (load can't be served)
       net.freq = Math.max(0, freq - 10 * dt);
     }
 
@@ -269,7 +274,7 @@ function simTick() {
     for (const c of activeConns) { adj[c.sourceId].push(c.targetId); adj[c.targetId].push(c.sourceId); }
     const visited = new Set();
     for (const n of netNodes) {
-      if (visited.has(n.id) || n.type !== 'generator') continue;
+      if (visited.has(n.id) || (n.type !== 'generator' && n.type !== 'storage')) continue;
       const q = [n.id]; visited.add(n.id);
       while (q.length) {
         const id = q.shift();
