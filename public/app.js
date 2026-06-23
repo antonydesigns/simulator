@@ -499,6 +499,11 @@ function balanceGrid() {
     load.shedPct = 0;
     if (load.baseMw) load.mw = load.baseMw;
   }
+  // Reset island frequencies to nominal so governor doesn't override balanced dispatch
+  for (const net of nets) {
+    net.freq = 50;
+    net.freqPrev = 50;
+  }
 
   for (const net of nets) {
     const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
