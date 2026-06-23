@@ -13,6 +13,19 @@ const state = {
   clipboard: null, // { nodes: [...copied nodes...], connections: [...] }
 };
 
+// ─── Island Colors ─────────────────────────────────────────────────────
+
+const ISLAND_COLORS = [
+  '#4a90d9', // blue
+  '#d96c4a', // rust
+  '#4ad96c', // green
+  '#d9c44a', // gold
+  '#9b4ad9', // purple
+  '#d94a8a', // pink
+  '#4ad9d9', // teal
+  '#d94a4a', // red
+];
+
 // ─── Simulation ───────────────────────────────────────────────────────
 
 const sim = {
@@ -542,8 +555,82 @@ function draw() {
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-  drawGrid(); drawConnections(); drawNodes(); drawPendingLine(); drawHoverDot(); drawSelectionRect();
+  drawGrid(); drawIslands(); drawConnections(); drawNodes(); drawPendingLine(); drawHoverDot(); drawSelectionRect();
   drawFrequencyHud();
+}
+
+// ─── Islands ──────────────────────────────────────────────────────────
+
+function drawIslands() {
+  const nets = state.networks || [];
+  for (const net of nets) {
+    const bb = net.boundingBox;
+    if (!bb || bb.w < 1 || bb.h < 1) continue;
+
+    const tl = worldToScreen(bb.x, bb.y);
+    const br = worldToScreen(bb.x + bb.w, bb.y + bb.h);
+    const w = br.x - tl.x, h = br.y - tl.y;
+    // Don't draw if off-screen
+    if (br.x < -200 || br.y < -200 || tl.x > window.innerWidth + 200 || tl.y > window.innerHeight + 200) continue;
+
+    const isSelected = net.id === selectedNetworkId;
+    const color = net.color || ISLAND_COLORS[0];
+
+    // Background fill
+    ctx.fillStyle = color + (isSelected ? '15' : '0a');
+    ctx.strokeStyle = isSelected ? color : color + '50';
+    ctx.lineWidth = isSelected ? 2.5 : 1.5;
+    ctx.setLineDash(isSelected ? [] : [4, 4]);
+    ctx.beginPath(); roundRectCtx(ctx, tl.x, tl.y, w, h, 14); ctx.fill(); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Header bar
+    const headerH = 30;
+    ctx.fillStyle = color + '25';
+    ctx.beginPath(); roundRectCtx(ctx, tl.x, tl.y, w, headerH, { tl: 14, tr: 14, bl: 0, br: 0 }); ctx.fill();
+    ctx.strokeStyle = color + '40'; ctx.lineWidth = 1;
+    ctx.beginPath(); roundRectCtx(ctx, tl.x, tl.y, w, headerH, { tl: 14, tr: 14, bl: 0, br: 0 }); ctx.stroke();
+
+    // Island name
+    ctx.fillStyle = isSelected ? color : '#555';
+    ctx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const label = net.customName || net.id;
+    const prefix = isSelected ? '▶ ' : '🏝 ';
+    ctx.fillText(prefix + label, tl.x + 10, tl.y + headerH / 2);
+
+    // Node count badge
+    ctx.fillStyle = '#999';
+    ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'right';
+    const count = net.nodeIds.size;
+    ctx.fillText(count + ' node' + (count !== 1 ? 's' : ''), tl.x + w - 10, tl.y + headerH / 2);
+  }
+}
+
+function roundRectCtx(ctx, x, y, w, h, r) {
+  if (typeof r === 'object') {
+    const { tl, tr, bl, br } = r;
+    ctx.moveTo(x + tl, y);
+    ctx.lineTo(x + w - tr, y);
+    ctx.arcTo(x + w, y, x + w, y + tr, tr);
+    ctx.lineTo(x + w, y + h - br);
+    ctx.arcTo(x + w, y + h, x + w - br, y + h, br);
+    ctx.lineTo(x + bl, y + h);
+    ctx.arcTo(x, y + h, x, y + h - bl, bl);
+    ctx.lineTo(x, y + tl);
+    ctx.arcTo(x, y, x + tl, y, tl);
+    return;
+  }
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
 }
 
 // ─── Cursor ────────────────────────────────────────────────────────────
@@ -596,9 +683,29 @@ function hitNode(wx, wy) {
 
 // ─── Network Detection ────────────────────────────────────────────────
 
+function setsEqual(a, b) {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
+}
+
+function computeBoundingBox(net) {
+  const nodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+  if (nodes.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    if (n.x < minX) minX = n.x;
+    if (n.y < minY) minY = n.y;
+    if (n.x > maxX) maxX = n.x;
+    if (n.y > maxY) maxY = n.y;
+  }
+  const pad = 60;
+  return { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 };
+}
+
 function findNetworks() {
   const visited = new Set();
-  const networks = [];
+  const components = [];
   const adj = {};
   for (const n of state.nodes) adj[n.id] = [];
   for (const c of state.connections) {
@@ -622,9 +729,21 @@ function findNetworks() {
         }
       }
     }
-    networks.push({ id: 'net_' + networks.length, nodeIds, freq: 50 });
+    components.push(nodeIds);
   }
-  return networks;
+
+  // Reuse old network objects to preserve customName across ticks
+  const oldNets = state.networks || [];
+  const newNets = [];
+  for (const nodeIds of components) {
+    const match = oldNets.find(o => o.nodeIds && setsEqual(o.nodeIds, nodeIds));
+    const net = match || { id: 'net_' + newNets.length, freq: 50, color: ISLAND_COLORS[newNets.length % ISLAND_COLORS.length] };
+    net.nodeIds = nodeIds;
+    net.boundingBox = computeBoundingBox(net);
+    if (!match) net.customName = null;
+    newNets.push(net);
+  }
+  return newNets;
 }
 
 // ─── ID ────────────────────────────────────────────────────────────────
@@ -759,6 +878,25 @@ async function load() {
 
 // ─── Context Menu ──────────────────────────────────────────────────────
 
+function hitIsland(wx, wy) {
+  const nets = state.networks || [];
+  // Check from top (last drawn) to bottom
+  for (let i = nets.length - 1; i >= 0; i--) {
+    const bb = nets[i].boundingBox;
+    if (!bb) continue;
+    const headerH = 30;
+    // Check if inside header
+    if (wx >= bb.x && wx <= bb.x + bb.w && wy >= bb.y && wy <= bb.y + headerH) {
+      return { net: nets[i], isHeader: true };
+    }
+    // Check if inside body
+    if (wx >= bb.x && wx <= bb.x + bb.w && wy >= bb.y && wy <= bb.y + bb.h) {
+      return { net: nets[i], isHeader: false };
+    }
+  }
+  return null;
+}
+
 function showMenu(e, nodeHit) {
   e.preventDefault();
   const world = mouseToWorld(e);
@@ -766,13 +904,26 @@ function showMenu(e, nodeHit) {
   menu.dataset.nodeId = nodeHit ? nodeHit.id : '';
   menuItems.innerHTML = '';
 
+  const islandHit = nodeHit ? null : hitIsland(world.x, world.y);
+
   if (nodeHit && nodeHit.type !== 'junction') {
     addMenuItem('Open settings', 'open-settings');
     addMenuSeparator();
     addMenuItem('Delete', 'delete-node');
   } else if (nodeHit) {
     addMenuItem('Delete', 'delete-node');
+  } else if (islandHit) {
+    // Island context menu
+    menu.dataset.netId = islandHit.net.id;
+    addMenuItem('+ Generator', 'add-generator');
+    addMenuItem('+ Load', 'add-load');
+    addMenuItem('+ Storage', 'add-storage');
+    addMenuSeparator();
+    addMenuItem('+ Junction', 'add-junction');
+    addMenuSeparator();
+    addMenuItem('Rename island', 'rename-island');
   } else {
+    // Empty canvas
     addMenuItem('+ Generator', 'add-generator');
     addMenuItem('+ Load', 'add-load');
     addMenuItem('+ Storage', 'add-storage');
@@ -883,12 +1034,20 @@ menu.addEventListener('click', (e) => {
   const item = e.target.closest('.context-menu-item');
   if (!item) return;
   const a = item.dataset.action, wx = parseFloat(menu.dataset.wx), wy = parseFloat(menu.dataset.wy), id = menu.dataset.nodeId;
+  const netId = menu.dataset.netId;
   if (a === 'add-generator') addNode('generator', wx, wy);
   else if (a === 'add-load') addNode('load', wx, wy);
   else if (a === 'add-storage') addNode('storage', wx, wy);
   else if (a === 'add-junction') addNode('junction', wx, wy);
   else if (a === 'open-settings') openSettings(id);
   else if (a === 'delete-node' && id) deleteNode(id);
+  else if (a === 'rename-island' && netId) {
+    const net = (state.networks || []).find(n => n.id === netId);
+    if (net) {
+      const name = prompt('Rename island:', net.customName || net.id);
+      if (name && name.trim()) { net.customName = name.trim(); persist(); draw(); }
+    }
+  }
   hideMenu();
 });
 
@@ -1534,18 +1693,32 @@ document.getElementById('stats-panel').addEventListener('mousedown', (e) => {
 // Detect clicks on any frequency HUD box
 canvas.addEventListener('click', (e) => {
   const screen = mouseToScreen(e);
+
+  // Check HUD box click (toggle chart)
   const nets = state.networks && state.networks.length > 0 ? state.networks : [{ id: 'net_0' }];
   const pad = 14, bw = 170, bh = 48;
   const rx = window.innerWidth - bw - pad;
   let ry = pad;
+  let hitHud = false;
   for (let i = 0; i < Math.max(1, nets.length); i++) {
     if (screen.x >= rx && screen.x <= rx + bw && screen.y >= ry && screen.y <= ry + bh) {
       freqChartVisible = !freqChartVisible;
       document.getElementById('freq-chart-panel').classList.toggle('hidden', !freqChartVisible);
       if (freqChartVisible) drawFreqChart();
+      hitHud = true;
       break;
     }
     ry += bh + 4;
+  }
+  if (hitHud) { e.stopPropagation(); return; }
+
+  // Check island header click (select island)
+  const world = mouseToWorld(e);
+  const islandHit = hitIsland(world.x, world.y);
+  if (islandHit && islandHit.isHeader) {
+    selectedNetworkId = islandHit.net.id;
+    if (statsPanelVisible) updateStatsPanel();
+    draw();
   }
 });
 
