@@ -487,6 +487,12 @@ html, body {
   border-bottom: 1px solid #e0dcd2;
   font-weight: 600;
   font-size: 14px;
+  cursor: grab;
+  user-select: none;
+}
+
+.stats-header:active {
+  cursor: grabbing;
 }
 
 .stats-close {

@@ -1037,6 +1037,17 @@ document.getElementById('stats-close-btn').addEventListener('click', () => {
   document.getElementById('stats-panel').classList.add('hidden');
 });
 
+// Make stats panel draggable
+document.getElementById('stats-panel').addEventListener('mousedown', (e) => {
+  if (e.target.closest('.stats-header') && !e.target.closest('.stats-close')) {
+    const panel = document.getElementById('stats-panel');
+    dragPanel = panel;
+    dragOff = { x: e.clientX - panel.offsetLeft, y: e.clientY - panel.offsetTop };
+    panel.style.zIndex = Date.now();
+    e.preventDefault();
+  }
+});
+
 // ─── Init ──────────────────────────────────────────────────────────────
 
 async function init() {
