@@ -1265,7 +1265,17 @@ canvas.addEventListener('mousedown', (e) => {
   ptr.downWorld = world; ptr.downScreen = screen; ptr.downTime = Date.now();
   ptr.downNodeId = hit ? hit.id : null;
   ptr.isDragging = false; ptr.isPanning = false; ptr.isSelecting = false; ptr.moved = false;
-  if (hit && !isSelected(hit)) { state.selectedNodeIds = new Set([hit.id]); state.selectedConnIds = new Set(); draw(); }
+  if (hit) {
+    if (e.ctrlKey || e.metaKey) {
+      if (isSelected(hit)) state.selectedNodeIds.delete(hit.id);
+      else state.selectedNodeIds.add(hit.id);
+      state.selectedConnIds = new Set();
+    } else if (!isSelected(hit)) {
+      state.selectedNodeIds = new Set([hit.id]);
+      state.selectedConnIds = new Set();
+    }
+    draw();
+  }
 });
 
 canvas.addEventListener('mousemove', (e) => {
@@ -1342,7 +1352,7 @@ canvas.addEventListener('mouseup', (e) => {
     state.hoverLine = hover;
     if (state.lineMode === 'status') {
       // Toggle line selection
-      if (e.shiftKey) {
+      if (e.ctrlKey || e.metaKey || e.shiftKey) {
         if (state.selectedConnIds.has(hover.conn.id)) state.selectedConnIds.delete(hover.conn.id);
         else state.selectedConnIds.add(hover.conn.id);
       } else {
@@ -1354,9 +1364,17 @@ canvas.addEventListener('mouseup', (e) => {
       splitConnection(hover.conn, hover.x, hover.y); state.hoverLine = null; return;
     }
   }
-  if (!hit) { state.pendingSourceId = null; state.selectedNodeIds = new Set(); state.selectedConnIds = new Set(); draw(); return; }
+  if (!hit) { state.pendingSourceId = null; if (!e.ctrlKey && !e.metaKey) { state.selectedNodeIds = new Set(); state.selectedConnIds = new Set(); } draw(); return; }
   if (state.pendingSourceId) { addConnection(state.pendingSourceId, hit.id); return; }
-  state.selectedNodeIds = new Set([hit.id]); state.selectedConnIds = new Set(); draw();
+  if (e.ctrlKey || e.metaKey) {
+    if (state.selectedNodeIds.has(hit.id)) state.selectedNodeIds.delete(hit.id);
+    else state.selectedNodeIds.add(hit.id);
+    state.selectedConnIds = new Set();
+  } else {
+    state.selectedNodeIds = new Set([hit.id]);
+    state.selectedConnIds = new Set();
+  }
+  draw();
 });
 
 function onDoubleClickNode(hit) {
