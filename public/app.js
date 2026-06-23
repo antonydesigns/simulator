@@ -1864,6 +1864,43 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
+  // Ctrl+V — Paste copied nodes (duplicate them at offset)
+  if (meta && !e.shiftKey && e.key === 'v' && state.clipboard && state.clipboard.nodes && state.clipboard.nodes.length > 0) {
+    e.preventDefault();
+    const offset = 40;
+    const idMap = {};
+    const newNodes = [];
+    for (const n of state.clipboard.nodes) {
+      const newId = uid();
+      idMap[n.id] = newId;
+      const newNode = JSON.parse(JSON.stringify(n));
+      newNode.id = newId;
+      newNode.x = n.x + offset;
+      newNode.y = n.y + offset;
+      newNodes.push(newNode);
+    }
+    state.nodes.push(...newNodes);
+    for (const c of (state.clipboard.connections || [])) {
+      if (idMap[c.sourceId] && idMap[c.targetId]) {
+        state.connections.push({
+          id: uid(),
+          sourceId: idMap[c.sourceId],
+          targetId: idMap[c.targetId],
+          reactance: c.reactance,
+          thermalLimit: c.thermalLimit,
+          tripped: false,
+          tripTimer: 0
+        });
+      }
+    }
+    state.selectedNodeIds = new Set(newNodes.map(n => n.id));
+    state.selectedConnIds = new Set();
+    recomputeNetworks();
+    persist();
+    draw();
+    return;
+  }
+
   // Ctrl+V — Paste connection between 2 selected nodes
   if (meta && !e.shiftKey && e.key === 'v' && state.lineClipboard && state.selectedNodeIds.size === 2) {
     e.preventDefault();
