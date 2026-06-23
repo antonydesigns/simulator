@@ -54,6 +54,12 @@ function simTick() {
   const f0 = 50;
   const dt = 1 / sim.tickHz;
 
+  // Clear stale line flow data — only recomputed lines get updated
+  for (const c of state.connections) {
+    c.mw = undefined;
+    c.loadingPct = undefined;
+  }
+
   for (const net of state.networks) {
     const freq = net.freq;
     const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
@@ -140,7 +146,38 @@ function simTick() {
     // --- Step 4: DC Power Flow ---
     try { solveDCPowerFlow(net); } catch (e) { /* solver may fail for degenerate cases */ }
 
-    // --- Step 5: AGC ---
+    // --- Step 5: Line tripping ---
+    const tripCurve = [
+      { limit: 200, time: 0.5 },
+      { limit: 150, time: 2 },
+      { limit: 120, time: 5 },
+      { limit: 100, time: 10 }
+    ];
+    const netConns = state.connections.filter(c =>
+      net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)
+    );
+    for (const c of netConns) {
+      if (c.tripped) continue;
+      const pct = c.loadingPct || 0;
+      if (pct > 100) {
+        // Find threshold
+        let tripTime = 0;
+        for (const tc of tripCurve) {
+          if (pct >= tc.limit) { tripTime = tc.time; break; }
+        }
+        if (tripTime > 0) {
+          c.tripTimer = (c.tripTimer || 0) + dt;
+          if (c.tripTimer >= tripTime) {
+            c.tripped = true;
+            c.tripTimer = tripTime;
+          }
+        }
+      } else {
+        c.tripTimer = 0;
+      }
+    }
+
+    // --- Step 6: AGC ---
     const balancingGens = gens.filter(g => g.mode === 'balancing');
     const freqErr = f0 - net.freq;
     if (balancingGens.length > 0) {
@@ -170,7 +207,7 @@ function simTick() {
 
   let changed = true;
 
-  // --- Step 6: Update open settings panels ---
+  // --- Step 7: Update open settings panels ---
   for (const nodeId of Object.keys(openPanels)) {
     const gen = state.nodes.find(n => n.id === nodeId && n.type === 'generator');
     if (gen) {
@@ -285,6 +322,8 @@ function restartSim() {
   for (const st of state.nodes.filter(n => n.type === 'storage')) {
     st.mwResponse = 0;
   }
+  // Reset tripped lines
+  for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
   state.frequency = 50;
   state.networks = findNetworks();
   for (const net of state.networks) { net.freq = 50; net.freqPrev = 50; }
@@ -301,11 +340,12 @@ function balanceGrid() {
   const nets = findNetworks();
   if (!nets.length) return;
 
-  // First reset all gen baselines to 0
+  // Reset all gen baselines and tripped lines
   for (const gen of state.nodes.filter(n => n.type === 'generator')) {
     gen.baselineContract = 0;
     gen.agcOffset = 0;
   }
+  for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
 
   for (const net of nets) {
     const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
@@ -431,9 +471,25 @@ function drawConnections() {
     if (!s || !t) continue;
     const p = worldToScreen(s.x, s.y), q = worldToScreen(t.x, t.y);
     
-    // Check if both nodes are in the same network
     const sameNet = state.networks && state.networks.some(net => net.nodeIds.has(s.id) && net.nodeIds.has(t.id));
-    
+
+    // Tripped line — dashed grey, skip color/progress
+    if (c.tripped) {
+      const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
+      ctx.beginPath();
+      ctx.strokeStyle = '#999';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+      ctx.setLineDash([]);
+      // Dashed "X" mark at midpoint
+      const siz = 4 * state.view.scale;
+      ctx.strokeStyle = '#666'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(mx - siz, my - siz); ctx.lineTo(mx + siz, my + siz); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(mx + siz, my - siz); ctx.lineTo(mx - siz, my + siz); ctx.stroke();
+      continue;
+    }
+
     // Color by loading %
     let color = '#7a766e';
     let lineWidth = sameNet ? 2 : 1.5;
@@ -458,6 +514,23 @@ function drawConnections() {
     if (!sameNet) ctx.setLineDash([4, 4]);
     ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
     ctx.setLineDash([]);
+
+    // Trip progress bar at midpoint (only overloaded lines)
+    if (sameNet && c.loadingPct !== undefined && c.loadingPct > 100 && state.view.scale > 0.5) {
+      const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
+      const barW = 30 * state.view.scale, barH = 4 * state.view.scale;
+      const tripTime = c.tripTimer || 0;
+      // Determine max time based on loading
+      let maxTime = 10;
+      if (c.loadingPct >= 200) maxTime = 0.5;
+      else if (c.loadingPct >= 150) maxTime = 2;
+      else if (c.loadingPct >= 120) maxTime = 5;
+      const pct = Math.min(1, tripTime / maxTime);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath(); ctx.roundRect(mx - barW / 2, my + 6 * state.view.scale, barW, barH, 2); ctx.fill();
+      ctx.fillStyle = pct > 0.8 ? '#c0392b' : '#e67e22';
+      ctx.beginPath(); ctx.roundRect(mx - barW / 2, my + 6 * state.view.scale, barW * pct, barH, 2); ctx.fill();
+    }
   }
 }
 
@@ -963,7 +1036,7 @@ function deleteNode(id) {
 function addConnection(sourceId, targetId) {
   if (sourceId === targetId) return;
   if (state.connections.some(c => (c.sourceId === sourceId && c.targetId === targetId) || (c.sourceId === targetId && c.targetId === sourceId))) return;
-  state.connections.push({ id: uid(), sourceId, targetId, reactance: 0.1, thermalLimit: 100 });
+  state.connections.push({ id: uid(), sourceId, targetId, reactance: 0.1, thermalLimit: 100, tripped: false, tripTimer: 0 });
   state.pendingSourceId = null;
   recomputeNetworks(); persist(); draw();
 }
@@ -976,8 +1049,8 @@ function splitConnection(conn, wx, wy) {
   state.connections = state.connections.filter(c => c !== conn);
   const halfX = (conn.reactance || 0.1) / 2;
   state.connections.push(
-    { id: uid(), sourceId: conn.sourceId, targetId: j.id, reactance: halfX, thermalLimit: conn.thermalLimit || 100 },
-    { id: uid(), sourceId: j.id, targetId: conn.targetId, reactance: halfX, thermalLimit: conn.thermalLimit || 100 }
+    { id: uid(), sourceId: conn.sourceId, targetId: j.id, reactance: halfX, thermalLimit: conn.thermalLimit || 100, tripped: false, tripTimer: 0 },
+    { id: uid(), sourceId: j.id, targetId: conn.targetId, reactance: halfX, thermalLimit: conn.thermalLimit || 100, tripped: false, tripTimer: 0 }
   );
   state.selectedNodeIds = new Set([j.id]);
   recomputeNetworks(); persist(); draw();
@@ -1008,11 +1081,13 @@ async function load() {
     if (data.view) state.view = data.view;
     state.selectedNodeIds = new Set();
     state.frequency = 50;
-    // Migrate legacy connections (add id, reactance, thermalLimit)
+    // Migrate legacy connections (add id, reactance, thermalLimit, trip fields)
     for (const c of state.connections) {
       if (!c.id) c.id = uid();
       if (c.reactance === undefined) c.reactance = 0.1;
       if (c.thermalLimit === undefined) c.thermalLimit = 100;
+      if (c.tripped === undefined) c.tripped = false;
+      if (c.tripTimer === undefined) c.tripTimer = 0;
     }
     for (const n of state.nodes) {
       if (n.mw === undefined) n.mw = 0;
@@ -1352,7 +1427,7 @@ document.addEventListener('keydown', (e) => {
     }
     state.nodes.push(...pasted);
     for (const c of state.clipboard.connections) {
-      state.connections.push({ id: uid(), sourceId: idMap[c.sourceId], targetId: idMap[c.targetId], reactance: c.reactance || 0.1, thermalLimit: c.thermalLimit || 100 });
+      state.connections.push({ id: uid(), sourceId: idMap[c.sourceId], targetId: idMap[c.targetId], reactance: c.reactance || 0.1, thermalLimit: c.thermalLimit || 100, tripped: false, tripTimer: 0 });
     }
     state.selectedNodeIds = new Set(pasted.map(n => n.id));
     persist(); draw();
