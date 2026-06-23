@@ -1795,6 +1795,13 @@ canvas.addEventListener('click', (e) => {
     selectedNetworkId = islandHit.net.id;
     if (statsPanelVisible) updateStatsPanel();
     draw();
+  } else if (!hitNode(world.x, world.y) && !islandHit) {
+    // Click on empty canvas — deselect island, clean view
+    if (selectedNetworkId !== 'all') {
+      selectedNetworkId = 'all';
+      if (statsPanelVisible) updateStatsPanel();
+      draw();
+    }
   }
 });
 
