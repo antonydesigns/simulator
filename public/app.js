@@ -4,6 +4,7 @@ const state = {
   nodes: [],
   connections: [],
   selectedNodeIds: new Set(),
+  selectedConnIds: new Set(),
   pendingSourceId: null,
   hoverLine: null,
   lineMode: 'junction', // 'junction' or 'status'
@@ -524,12 +525,20 @@ function drawConnections() {
       lineWidth = 4;
     }
     
+    // Selected connection highlight (overrides hover)
+    if (state.selectedConnIds && state.selectedConnIds.has(c.id)) {
+      ctx.shadowColor = '#ffd700';
+      ctx.shadowBlur = 6;
+      lineWidth = 4;
+    }
+    
     ctx.beginPath();
     ctx.strokeStyle = color;
     ctx.lineWidth = lineWidth;
     if (!sameNet) ctx.setLineDash([4, 4]);
     ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
     ctx.setLineDash([]);
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
 
     // Trip progress bar at midpoint (only overloaded lines)
     if (sameNet && c.loadingPct !== undefined && c.loadingPct > 100 && state.view.scale > 0.5) {
@@ -1026,7 +1035,7 @@ function addNode(type, wx, wy) {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0 };
   }
   state.nodes.push(node);
-  state.selectedNodeIds = new Set([node.id]);
+  state.selectedNodeIds = new Set([node.id]); state.selectedConnIds = new Set();
   recomputeNetworks(); persist(); draw();
   return node;
 }
@@ -1068,7 +1077,7 @@ function splitConnection(conn, wx, wy) {
     { id: uid(), sourceId: conn.sourceId, targetId: j.id, reactance: halfX, thermalLimit: conn.thermalLimit || 100, tripped: false, tripTimer: 0 },
     { id: uid(), sourceId: j.id, targetId: conn.targetId, reactance: halfX, thermalLimit: conn.thermalLimit || 100, tripped: false, tripTimer: 0 }
   );
-  state.selectedNodeIds = new Set([j.id]);
+  state.selectedNodeIds = new Set([j.id]); state.selectedConnIds = new Set();
   recomputeNetworks(); persist(); draw();
 }
 
@@ -1076,9 +1085,15 @@ function splitConnection(conn, wx, wy) {
 
 function computeMarqueeSelection(w1, w2) {
   const x1 = Math.min(w1.x, w2.x), y1 = Math.min(w1.y, w2.y), x2 = Math.max(w1.x, w2.x), y2 = Math.max(w1.y, w2.y);
-  const ids = new Set();
-  for (const n of state.nodes) if (n.x >= x1 && n.x <= x2 && n.y >= y1 && n.y <= y2) ids.add(n.id);
-  return ids;
+  const nodeIds = new Set();
+  for (const n of state.nodes) if (n.x >= x1 && n.x <= x2 && n.y >= y1 && n.y <= y2) nodeIds.add(n.id);
+  const connIds = new Set();
+  for (const c of state.connections) {
+    const s = state.nodes.find(n => n.id === c.sourceId);
+    const t = state.nodes.find(n => n.id === c.targetId);
+    if (s && t && s.x >= x1 && s.x <= x2 && s.y >= y1 && s.y <= y2 && t.x >= x1 && t.x <= x2 && t.y >= y1 && t.y <= y2) connIds.add(c.id);
+  }
+  return { nodeIds, connIds };
 }
 
 // ─── Persistence ───────────────────────────────────────────────────────
@@ -1095,7 +1110,7 @@ async function load() {
     state.nodes = data.nodes || [];
     state.connections = data.connections || [];
     if (data.view) state.view = data.view;
-    state.selectedNodeIds = new Set();
+    state.selectedNodeIds = new Set(); state.selectedConnIds = new Set();
     state.frequency = 50;
     // Migrate legacy connections (add id, reactance, thermalLimit, trip fields)
     for (const c of state.connections) {
@@ -1186,11 +1201,6 @@ function showMenu(e, nodeHit) {
     menu.dataset.connId = lineHit.conn.id;
     addMenuItem('Line settings', 'line-settings');
     addMenuSeparator();
-    addMenuItem('Copy settings', 'copy-line-settings');
-    if (state.lineClipboard) {
-      addMenuItem('Paste settings', 'paste-line-settings');
-    }
-    addMenuSeparator();
     addMenuItem('Delete line', 'delete-line');
   } else if (islandHit) {
     menu.dataset.netId = islandHit.net.id;
@@ -1255,7 +1265,7 @@ canvas.addEventListener('mousedown', (e) => {
   ptr.downWorld = world; ptr.downScreen = screen; ptr.downTime = Date.now();
   ptr.downNodeId = hit ? hit.id : null;
   ptr.isDragging = false; ptr.isPanning = false; ptr.isSelecting = false; ptr.moved = false;
-  if (hit && !isSelected(hit)) { state.selectedNodeIds = new Set([hit.id]); draw(); }
+  if (hit && !isSelected(hit)) { state.selectedNodeIds = new Set([hit.id]); state.selectedConnIds = new Set(); draw(); }
 });
 
 canvas.addEventListener('mousemove', (e) => {
@@ -1315,7 +1325,9 @@ canvas.addEventListener('mouseup', (e) => {
   if (ptr.isPanning) { ptr.isPanning = false; ptr.downWorld = null; draw(); updateCursor(e); return; }
   if (ptr.isSelecting) {
     ptr.isSelecting = false;
-    state.selectedNodeIds = computeMarqueeSelection(screenToWorld(ptr.downScreen.x, ptr.downScreen.y), screenToWorld(ptr.mouseScreen.x, ptr.mouseScreen.y));
+    const marquee = computeMarqueeSelection(screenToWorld(ptr.downScreen.x, ptr.downScreen.y), screenToWorld(ptr.mouseScreen.x, ptr.mouseScreen.y));
+    state.selectedNodeIds = marquee.nodeIds;
+    state.selectedConnIds = marquee.connIds;
     ptr.downWorld = null; draw(); updateCursor(e); return;
   }
 
@@ -1329,19 +1341,28 @@ canvas.addEventListener('mouseup', (e) => {
   if (hover) {
     state.hoverLine = hover;
     if (state.lineMode === 'status') {
-      openLineSettings(hover.conn.id); state.hoverLine = null; return;
+      // Toggle line selection
+      if (e.shiftKey) {
+        if (state.selectedConnIds.has(hover.conn.id)) state.selectedConnIds.delete(hover.conn.id);
+        else state.selectedConnIds.add(hover.conn.id);
+      } else {
+        state.selectedConnIds = new Set([hover.conn.id]);
+        state.selectedNodeIds = new Set();
+      }
+      state.hoverLine = null; draw(); return;
     } else {
       splitConnection(hover.conn, hover.x, hover.y); state.hoverLine = null; return;
     }
   }
-  if (!hit) { state.pendingSourceId = null; state.selectedNodeIds = new Set(); draw(); return; }
+  if (!hit) { state.pendingSourceId = null; state.selectedNodeIds = new Set(); state.selectedConnIds = new Set(); draw(); return; }
   if (state.pendingSourceId) { addConnection(state.pendingSourceId, hit.id); return; }
-  state.selectedNodeIds = new Set([hit.id]); draw();
+  state.selectedNodeIds = new Set([hit.id]); state.selectedConnIds = new Set(); draw();
 });
 
 function onDoubleClickNode(hit) {
   if (state.pendingSourceId === hit.id) { state.pendingSourceId = null; state.selectedNodeIds = new Set(); }
   else { state.pendingSourceId = hit.id; state.selectedNodeIds = new Set([hit.id]); }
+  state.selectedConnIds = new Set();
   draw();
 }
 
@@ -1377,12 +1398,6 @@ menu.addEventListener('click', (e) => {
     recomputeNetworks(); persist(); draw();
   } else if (a === 'line-settings' && connId) {
     openLineSettings(connId);
-  } else if (a === 'copy-line-settings' && connId) {
-    const src = state.connections.find(c => c.id === connId);
-    if (src) state.lineClipboard = { reactance: src.reactance, thermalLimit: src.thermalLimit };
-  } else if (a === 'paste-line-settings' && connId && state.lineClipboard) {
-    const tgt = state.connections.find(c => c.id === connId);
-    if (tgt) { tgt.reactance = state.lineClipboard.reactance; tgt.thermalLimit = state.lineClipboard.thermalLimit; persist(); draw(); }
   } else if (a === 'rename-island' && netId) {
     const net = (state.networks || []).find(n => n.id === netId);
     if (net) {
@@ -1398,11 +1413,20 @@ document.addEventListener('click', (e) => { if (!menu.contains(e.target)) hideMe
 document.addEventListener('keydown', (e) => {
   const meta = e.ctrlKey || e.metaKey;
 
-  if (e.key === 'Escape') { islandDrag = null; state.pendingSourceId = null; state.selectedNodeIds = new Set(); state.hoverLine = null; hideMenu(); draw(); }
+  if (e.key === 'Escape') { islandDrag = null; state.pendingSourceId = null; state.selectedNodeIds = new Set(); state.selectedConnIds = new Set(); state.hoverLine = null; hideMenu(); draw(); }
 
   if (e.key === 'j' || e.key === 'J') {
     state.lineMode = state.lineMode === 'junction' ? 'status' : 'junction';
     draw();
+  }
+
+  // Ctrl+C — Copy selected connections
+  if (meta && e.key === 'c' && state.selectedConnIds.size > 0) {
+    e.preventDefault();
+    const copied = state.connections.filter(c => state.selectedConnIds.has(c.id)).map(c => ({ ...c }));
+    state.clipboard = { connections: copied };
+    state.lineClipboard = copied[0] ? { reactance: copied[0].reactance, thermalLimit: copied[0].thermalLimit } : null;
+    return;
   }
 
   // Ctrl+C — Copy selected nodes
@@ -1416,8 +1440,32 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
+  // Ctrl+V — Paste connection between 2 selected nodes
+  if (meta && !e.shiftKey && e.key === 'v' && state.lineClipboard && state.selectedNodeIds.size === 2) {
+    e.preventDefault();
+    const ids = [...state.selectedNodeIds];
+    if (!state.connections.some(c => (c.sourceId === ids[0] && c.targetId === ids[1]) || (c.sourceId === ids[1] && c.targetId === ids[0]))) {
+      state.connections.push({ id: uid(), sourceId: ids[0], targetId: ids[1], reactance: state.lineClipboard.reactance, thermalLimit: state.lineClipboard.thermalLimit, tripped: false, tripTimer: 0 });
+      recomputeNetworks(); persist(); draw();
+    }
+    return;
+  }
+
+  // Ctrl+Shift+V — Paste settings onto selected connections
+  if (meta && e.shiftKey && e.key === 'V' && state.lineClipboard && state.selectedConnIds.size > 0) {
+    e.preventDefault();
+    for (const c of state.connections) {
+      if (state.selectedConnIds.has(c.id)) {
+        c.reactance = state.lineClipboard.reactance;
+        c.thermalLimit = state.lineClipboard.thermalLimit;
+      }
+    }
+    persist(); draw();
+    return;
+  }
+
   // Ctrl+Shift+V — Paste properties onto matching selected nodes
-  if (meta && e.shiftKey && e.key === 'V' && state.clipboard && state.clipboard.nodes.length === 1 && state.selectedNodeIds.size > 0) {
+  if (meta && e.shiftKey && e.key === 'V' && state.clipboard && state.clipboard.nodes && state.clipboard.nodes.length === 1 && state.selectedNodeIds.size > 0) {
     e.preventDefault();
     const src = state.clipboard.nodes[0];
     const targets = state.nodes.filter(n => state.selectedNodeIds.has(n.id) && n.type === src.type && n.id !== src.id);
@@ -1456,8 +1504,16 @@ document.addEventListener('keydown', (e) => {
     for (const c of state.clipboard.connections) {
       state.connections.push({ id: uid(), sourceId: idMap[c.sourceId], targetId: idMap[c.targetId], reactance: c.reactance || 0.1, thermalLimit: c.thermalLimit || 100, tripped: false, tripTimer: 0 });
     }
-    state.selectedNodeIds = new Set(pasted.map(n => n.id));
+    state.selectedNodeIds = new Set(pasted.map(n => n.id)); state.selectedConnIds = new Set();
     persist(); draw();
+    return;
+  }
+
+  if ((e.key === 'Backspace' || e.key === 'Delete') && state.selectedConnIds.size > 0) {
+    e.preventDefault();
+    state.connections = state.connections.filter(c => !state.selectedConnIds.has(c.id));
+    state.selectedConnIds = new Set();
+    recomputeNetworks(); persist(); draw();
     return;
   }
 
@@ -1469,7 +1525,7 @@ document.addEventListener('keydown', (e) => {
       if (state.pendingSourceId === id) state.pendingSourceId = null;
       closeSettings(id);
     }
-    state.selectedNodeIds = new Set();
+    state.selectedNodeIds = new Set(); state.selectedConnIds = new Set();
     if (hadGen && state.nodes.filter(n => n.type === 'generator').length === 0) state.frequency = 50;
     recomputeNetworks(); persist(); draw();
   }
