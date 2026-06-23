@@ -527,8 +527,10 @@ function balanceGrid() {
     let remaining = totalDemand - fixedSupply;
 
     // Distribute proportionally across flexible gens AND storage
+    // Exclude storage with insufficient SoC (can't discharge what it doesn't have)
+    const dispatchableStor = notFixedStor.filter(s => s.mw === undefined || s.mw > 0);
     const flexGenRating = flexGens.reduce((sum, g) => sum + (g.rating || 100), 0);
-    const flexStorRate = notFixedStor.reduce((sum, s) => sum + (s.dischargeRate || 50), 0);
+    const flexStorRate = dispatchableStor.reduce((sum, s) => sum + (s.dischargeRate || 50), 0);
     const totalFlex = flexGenRating + flexStorRate;
 
     if (totalFlex > 0 && remaining > 0) {
@@ -537,11 +539,22 @@ function balanceGrid() {
         gen.baselineContract = Math.min(Math.round(remaining * share * 10) / 10, gen.rating || Infinity);
         gen.mw = gen.baselineContract;
       }
-      for (const st of notFixedStor) {
+      for (const st of dispatchableStor) {
         const share = (st.dischargeRate || 50) / totalFlex;
         st.baselineContract = Math.min(Math.round(remaining * share * 10) / 10, st.dischargeRate || 50);
         if (st.mw !== undefined && st.mw < st.baselineContract * 0.05) st.baselineContract = 0;
         st.mwResponse = st.baselineContract;
+      }
+      // Redistribute any shortfall from zeroed storage to flexible gens
+      const totalAllocated = flexGens.reduce((s, g) => s + (g.baselineContract || 0), 0) +
+        dispatchableStor.reduce((s, st) => s + (st.baselineContract || 0), 0);
+      const shortfall = remaining - totalAllocated;
+      if (shortfall > 1 && flexGens.length > 0) {
+        for (const gen of flexGens) {
+          const addShare = (gen.rating || 100) / flexGenRating;
+          gen.baselineContract = Math.min((gen.baselineContract || 0) + shortfall * addShare, gen.rating || Infinity);
+          gen.mw = gen.baselineContract;
+        }
       }
     } else if (totalFlex > 0 && remaining < 0) {
       // Surplus: charge storage to absorb excess (gens can't absorb, only curtail)
