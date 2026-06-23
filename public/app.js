@@ -12,6 +12,7 @@ const state = {
   frequency: 50,
   networks: [],
   clipboard: null, // { nodes: [...copied nodes...], connections: [...] }
+  lineClipboard: null, // { reactance, thermalLimit } from a copied line
 };
 
 let hoveredIslandId = null;
@@ -1185,6 +1186,11 @@ function showMenu(e, nodeHit) {
     menu.dataset.connId = lineHit.conn.id;
     addMenuItem('Line settings', 'line-settings');
     addMenuSeparator();
+    addMenuItem('Copy settings', 'copy-line-settings');
+    if (state.lineClipboard) {
+      addMenuItem('Paste settings', 'paste-line-settings');
+    }
+    addMenuSeparator();
     addMenuItem('Delete line', 'delete-line');
   } else if (islandHit) {
     menu.dataset.netId = islandHit.net.id;
@@ -1371,6 +1377,12 @@ menu.addEventListener('click', (e) => {
     recomputeNetworks(); persist(); draw();
   } else if (a === 'line-settings' && connId) {
     openLineSettings(connId);
+  } else if (a === 'copy-line-settings' && connId) {
+    const src = state.connections.find(c => c.id === connId);
+    if (src) state.lineClipboard = { reactance: src.reactance, thermalLimit: src.thermalLimit };
+  } else if (a === 'paste-line-settings' && connId && state.lineClipboard) {
+    const tgt = state.connections.find(c => c.id === connId);
+    if (tgt) { tgt.reactance = state.lineClipboard.reactance; tgt.thermalLimit = state.lineClipboard.thermalLimit; persist(); draw(); }
   } else if (a === 'rename-island' && netId) {
     const net = (state.networks || []).find(n => n.id === netId);
     if (net) {
