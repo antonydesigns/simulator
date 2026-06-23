@@ -841,7 +841,7 @@ function deleteNode(id) {
 function addConnection(sourceId, targetId) {
   if (sourceId === targetId) return;
   if (state.connections.some(c => (c.sourceId === sourceId && c.targetId === targetId) || (c.sourceId === targetId && c.targetId === sourceId))) return;
-  state.connections.push({ sourceId, targetId });
+  state.connections.push({ id: uid(), sourceId, targetId, reactance: 0.1, thermalLimit: 100 });
   state.pendingSourceId = null;
   recomputeNetworks(); persist(); draw();
 }
@@ -852,7 +852,11 @@ function splitConnection(conn, wx, wy) {
   const j = { id: uid(), type: 'junction', x: wx, y: wy, label: '', mw: 0 };
   state.nodes.push(j);
   state.connections = state.connections.filter(c => c !== conn);
-  state.connections.push({ sourceId: conn.sourceId, targetId: j.id }, { sourceId: j.id, targetId: conn.targetId });
+  const halfX = (conn.reactance || 0.1) / 2;
+  state.connections.push(
+    { id: uid(), sourceId: conn.sourceId, targetId: j.id, reactance: halfX, thermalLimit: conn.thermalLimit || 100 },
+    { id: uid(), sourceId: j.id, targetId: conn.targetId, reactance: halfX, thermalLimit: conn.thermalLimit || 100 }
+  );
   state.selectedNodeIds = new Set([j.id]);
   recomputeNetworks(); persist(); draw();
 }
@@ -882,6 +886,12 @@ async function load() {
     if (data.view) state.view = data.view;
     state.selectedNodeIds = new Set();
     state.frequency = 50;
+    // Migrate legacy connections (add id, reactance, thermalLimit)
+    for (const c of state.connections) {
+      if (!c.id) c.id = uid();
+      if (c.reactance === undefined) c.reactance = 0.1;
+      if (c.thermalLimit === undefined) c.thermalLimit = 100;
+    }
     for (const n of state.nodes) {
       if (n.mw === undefined) n.mw = 0;
       if (n.type === 'load' && n.mw === 0) n.mw = 10;
@@ -1197,7 +1207,7 @@ document.addEventListener('keydown', (e) => {
     }
     state.nodes.push(...pasted);
     for (const c of state.clipboard.connections) {
-      state.connections.push({ sourceId: idMap[c.sourceId], targetId: idMap[c.targetId] });
+      state.connections.push({ id: uid(), sourceId: idMap[c.sourceId], targetId: idMap[c.targetId], reactance: c.reactance || 0.1, thermalLimit: c.thermalLimit || 100 });
     }
     state.selectedNodeIds = new Set(pasted.map(n => n.id));
     persist(); draw();
