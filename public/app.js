@@ -32,34 +32,37 @@ function simTick() {
   const dt = 1 / sim.tickHz;
   const f0 = 50;
 
-  // --- Step 1: Governor droop with turbine time constant ---
-  // FCR responds continuously via a first-order turbine lag (timeConstant seconds).
-  // The dispatch ramp rate (rampRate MW/s) is a separate, slower limit for
-  // schedule following and AGC — it does NOT apply to FCR.
-  // Targets:
-  //   balancing gens: _baseSetpoint + FCR govMod
-  //   fcr-only gens:  _baseSetpoint + FCR (fixed base, no AGC)
-  //   fixed gens:     dispatchTarget (no FCR, no AGC)
+  // --- Step 1: Governor droop + baseline + AGC offset ---
+  // gen.mw = baselineContract + FCR response + AGC offset
+  //   FCR response = govMod clamped to ±fcrHeadroom (symmetrical)
+  //   AGC offset = accumulated from Step 4 (reset on restart)
+  //   Total clamped to [afrrMin, afrrMax] ∩ [0, rating]
+  //   Smooth first-order turbine lag (timeConstant)
   for (const gen of gens) {
-    const maxMw = gen.rating || Infinity;
-    let targetMw;
+    let totalTarget;
 
     if (gen.mode === 'fixed') {
-      targetMw = Math.min(gen.dispatchTarget || gen._baseSetpoint || 0, maxMw);
+      totalTarget = gen.baselineContract || 0;
     } else {
       const droop = gen.droop || 0.04;
       const rating = gen.rating || 100;
-      const base = gen._baseSetpoint || 0;
       const dev = (state.frequency - f0) / f0;
       const govMod = -(1 / droop) * dev * rating;
-      targetMw = Math.min(Math.max(0, base + govMod), maxMw);
+      const fcrHeadroom = gen.fcrHeadroom || 10;
+      const fcrResponse = Math.max(-fcrHeadroom, Math.min(fcrHeadroom, govMod));
+      totalTarget = (gen.baselineContract || 0) + fcrResponse + (gen.agcOffset || 0);
     }
 
-    // First-order turbine lag: smooth continuous response
-    // gen.mw approaches targetMw with timeConstant (default 1 second)
+    // Clamp to aFRR range and rating
+    const afrrMin = gen.afrrMin !== undefined ? gen.afrrMin : 0;
+    const afrrMax = gen.afrrMax !== undefined ? gen.afrrMax : (gen.rating || Infinity);
+    const maxMw = gen.rating || Infinity;
+    totalTarget = Math.max(0, afrrMin, Math.min(afrrMax, maxMw, totalTarget));
+
+    // First-order turbine lag
     const current = gen.mw || 0;
     const T = gen.turbineTimeConstant || 1;
-    gen.mw = current + (targetMw - current) * dt / T;
+    gen.mw = current + (totalTarget - current) * dt / T;
   }
 
   const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
@@ -102,44 +105,22 @@ function simTick() {
 
   let changed = true;
 
-  // --- Step 4: Ramp base setpoint toward dispatch target ---
-  // Each gen ramps toward its user-set dispatchTarget, not toward load share.
-  // The governor + frequency deviation provide the fast balancing on top.
-  // Fixed gens skip this — their output is locked.
-  for (const gen of gens) {
-    if (gen.mode === 'fixed') continue;
-    const base = gen._baseSetpoint || 0;
-    const target = gen.dispatchTarget || 0;
-    const diff = target - base;
-    const maxDelta = (gen.rampRate || 5) * dt;
-    const delta = Math.max(-maxDelta, Math.min(maxDelta, diff));
-    if (Math.abs(delta) > 0.001) {
-      gen._baseSetpoint = Math.max(0, base + delta);
-      changed = true;
-    }
-  }
-
-  // --- Step 4a: AGC (aFRR) — secondary frequency control ---
-  // Ramps dispatchTargets of balancing gens to relieve FCR headroom
-  // and converge frequency toward 50 Hz. Rate-limited to the ramp rate
-  // so dispatchTarget never outruns what the gen can physically follow.
-  // Only full-balancing gens (mode === 'balancing') participate.
-  // FCR-only gens and fixed gens are excluded.
-  {
-    const freqErr = f0 - state.frequency;
-    const balancingGens = gens.filter(g => g.mode === 'balancing');
-    const agcDeadband = 0.02; // Hz — AGC ignores errors within ±20 mHz, prevents hunting
-    if (balancingGens.length > 0 && Math.abs(freqErr) > agcDeadband) {
-      const rampRate = (balancingGens[0].rampRate || 5);
-      const maxAgcDelta = rampRate * dt;  // can't change faster than ramp
-      const totalBalRating = balancingGens.reduce((s, g) => s + (g.rating || 100), 0);
-      const agcUnclamped = 50 * freqErr * dt;
-      const agcTotal = Math.max(-maxAgcDelta, Math.min(maxAgcDelta, agcUnclamped));
-      if (Math.abs(agcTotal) > 0.0001) {
-        for (const gen of balancingGens) {
-          const share = (gen.rating || 100) / totalBalRating;
-          gen.dispatchTarget = Math.round(Math.min(Math.max(0, gen.dispatchTarget + agcTotal * share), gen.rating || Infinity) * 1000) / 1000;
-          changed = true;
+  // --- Step 4: AGC (aFRR / secondary control) ---
+  // Slowly adjusts agcOffset to restore 50 Hz.
+  // Distribution proportional to aFRR headroom (max possible upward headroom).
+  const balancingGens = gens.filter(g => g.mode === 'balancing');
+  const freqErr = f0 - state.frequency;
+  const agcDeadband = 0.02; // Hz
+  if (balancingGens.length > 0 && Math.abs(freqErr) > agcDeadband) {
+    const totalHeadroom = balancingGens.reduce((s, g) => s + Math.max(0, (g.afrrMax !== undefined ? g.afrrMax : (g.rating || 100)) - (g.baselineContract || 0) - (g.fcrHeadroom || 10)), 0);
+    if (totalHeadroom > 0) {
+      const totalAgc = 50 * freqErr * dt; // MW of total AGC correction this tick
+      for (const gen of balancingGens) {
+        const upwardHeadroom = Math.max(0, (gen.afrrMax !== undefined ? gen.afrrMax : (gen.rating || 100)) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10));
+        const share = upwardHeadroom / totalHeadroom;
+        const agcDelta = totalAgc * share;
+        if (Math.abs(agcDelta) > 0.0001) {
+          gen.agcOffset = (gen.agcOffset || 0) + agcDelta;
         }
       }
     }
@@ -151,11 +132,11 @@ function simTick() {
     if (gen) {
       const entry = openPanels[nodeId];
       if (entry.outputEl) entry.outputEl.textContent = Math.round(gen.mw || 0) + ' MW';
-      if (entry.dispatchSlider && entry.dispatchVal) {
-        const d = gen.dispatchTarget || 0;
-        if (d > parseInt(entry.dispatchSlider.max)) entry.dispatchSlider.max = d;
-        entry.dispatchSlider.value = d;
-        entry.dispatchVal.textContent = d.toFixed(1);
+      if (entry.baselineSlider && entry.baselineVal) {
+        const d = gen.baselineContract || 0;
+        if (d > parseInt(entry.baselineSlider.max)) entry.baselineSlider.max = d;
+        entry.baselineSlider.value = d;
+        entry.baselineVal.textContent = Math.round(d) + ' MW';
       }
     }
     const st = state.nodes.find(n => n.id === nodeId && n.type === 'storage');
@@ -170,7 +151,11 @@ function simTick() {
     const fcrBadge = document.getElementById('fcr-badge');
     const afrrBadge = document.getElementById('afrr-badge');
     const fcrGens = gens.filter(g => g.mode === 'balancing' || g.mode === 'fcr-only');
-    const fcrActive = fcrGens.some(g => Math.abs(g.mw - g._baseSetpoint) > 0.5);
+    const fcrActive = fcrGens.some(g => {
+      const dev = (state.frequency - f0) / f0;
+      const govMod = -(1 / (g.droop || 0.04)) * dev * (g.rating || 100);
+      return Math.abs(govMod) > 0.5 && Math.abs(govMod) <= (g.fcrHeadroom || 10);
+    });
     fcrBadge.className = 'status-badge ' + (fcrActive ? 'fcr-active' : 'fcr-inactive');
     const balancingGens = gens.filter(g => g.mode === 'balancing');
     const afrrActive = Math.abs(f0 - state.frequency) > 0.001 && balancingGens.length > 0;
@@ -188,11 +173,12 @@ function simTick() {
     for (const node of state.nodes) {
       entry.nodes[node.id] = { type: node.type, mw: node.mw || 0 };
       if (node.type === 'generator') {
-        entry.nodes[node.id].dispatchTarget = node.dispatchTarget || 0;
-        entry.nodes[node.id]._baseSetpoint = node._baseSetpoint || 0;
+        entry.nodes[node.id].baselineContract = node.baselineContract || 0;
+        entry.nodes[node.id].agcOffset = node.agcOffset || 0;
         entry.nodes[node.id].mode = node.mode || 'balancing';
         entry.nodes[node.id].rating = node.rating || 100;
         entry.nodes[node.id].droop = node.droop || 0.04;
+        entry.nodes[node.id].fcrHeadroom = node.fcrHeadroom || 10;
         entry.nodes[node.id].turbineTimeConstant = node.turbineTimeConstant || 1;
       }
     }
@@ -218,8 +204,8 @@ function restartSim() {
   sim.dataBuffer = [];
   sim.captureAccum = 0;
   for (const gen of state.nodes.filter(n => n.type === 'generator')) {
-    gen._baseSetpoint = gen.dispatchTarget || 0;
-    gen.mw = gen._baseSetpoint;
+    gen.agcOffset = 0;
+    gen.mw = gen.baselineContract || 0;
   }
   state.frequency = 50;
   draw();
@@ -250,9 +236,9 @@ function balanceGrid() {
   if (totalRating > 0) {
     for (const gen of flexGens) {
       const share = (gen.rating || 100) / totalRating;
-      gen.dispatchTarget = Math.min(Math.round(remaining * share * 10) / 10, gen.rating || Infinity);
-      gen._baseSetpoint = gen.dispatchTarget;
-      gen.mw = gen.dispatchTarget;
+      gen.baselineContract = Math.min(Math.round(remaining * share * 10) / 10, gen.rating || Infinity);
+      gen.agcOffset = 0;
+      gen.mw = gen.baselineContract;
     }
   }
 
@@ -550,7 +536,7 @@ function addNode(type, wx, wy) {
   if (type === 'load') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rampRate: 5, rating: 100, inertia: 5, droop: 0.04, dispatchTarget: 0, _baseSetpoint: 0, mode: 'balancing', turbineTimeConstant: 1 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, agcOffset: 0 };
   } else if (type === 'storage') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, chargeRate: 5, dischargeRate: 5, maxCapacity: 100 };
   } else {
@@ -627,12 +613,17 @@ async function load() {
       if (n.mw === undefined) n.mw = 0;
       if (n.type === 'load' && n.mw === 0) n.mw = 10;
       if (n.type === 'generator') {
-        if (n.rampRate === undefined) n.rampRate = 5;
+        if (n.dispatchTarget !== undefined) { n.baselineContract = n.dispatchTarget; delete n.dispatchTarget; }
+        if (n._baseSetpoint !== undefined) delete n._baseSetpoint;
+        if (n.rampRate !== undefined) delete n.rampRate;
+        if (n.baselineContract === undefined) n.baselineContract = 0;
+        if (n.fcrHeadroom === undefined) n.fcrHeadroom = 10;
+        if (n.afrrMin === undefined) n.afrrMin = 0;
+        if (n.afrrMax === undefined) n.afrrMax = n.rating || 100;
+        if (n.agcOffset === undefined) n.agcOffset = 0;
         if (n.rating === undefined) n.rating = 100;
         if (n.inertia === undefined) n.inertia = 5;
         if (n.droop === undefined) n.droop = 0.04;
-        if (n.dispatchTarget === undefined) n.dispatchTarget = 0;
-        if (n._baseSetpoint === undefined) n._baseSetpoint = n.mw || 0;
         if (n.turbineTimeConstant === undefined) n.turbineTimeConstant = 1;
         // Migrate legacy merchantLock → mode
         if (n.merchantLock !== undefined) { n.mode = n.merchantLock ? 'fixed' : 'balancing'; delete n.merchantLock; }
@@ -818,58 +809,136 @@ function openSettings(nodeId) {
     panel.innerHTML = `
       <div class="settings-header"><span class="settings-title">Generator ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
-        <div class="settings-row"><label class="settings-label">Dispatch (MW)</label><div class="settings-slider-group"><input type="range" class="dispatch-slider" min="0" max="${node.rating}" step="10" value="${node.dispatchTarget || 0}"><span class="dispatch-value">${node.dispatchTarget || 0}</span></div></div>
-        <div class="settings-row"><label class="settings-label">Current Output</label><div class="settings-value-display gen-output" style="font-size:18px">${Math.round(node.mw || 0)} MW</div></div>
-        <div class="settings-row"><label class="settings-label">Ramp Rate (MW/s)</label><div class="settings-slider-group"><input type="range" class="ramp-slider" min="1" max="50" step="1" value="${node.rampRate || 5}"><span class="ramp-value">${node.rampRate || 5}</span></div></div>
-        <div class="settings-row"><label class="settings-label">Rating (MVA)</label><div class="settings-slider-group"><input type="range" class="rating-slider" min="10" max="500" step="10" value="${node.rating || 100}"><span class="rating-value">${node.rating || 100}</span></div></div>
-        <div class="settings-row"><label class="settings-label">Inertia H (s)</label><div class="settings-slider-group"><input type="range" class="inertia-slider" min="1" max="15" step="0.5" value="${node.inertia || 5}"><span class="inertia-value">${(node.inertia || 5).toFixed(1)}</span></div></div>
-        <div class="settings-row"><label class="settings-label">Droop (%)</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="1" max="10" step="0.5" value="${(node.droop || 0.04) * 100}"><span class="droop-value">${((node.droop || 0.04) * 100).toFixed(1)}%</span></div></div>
-        <div class="settings-row"><label class="settings-label">Turbine TC (s)</label><div class="settings-slider-group"><input type="range" class="tc-slider" min="0.2" max="5" step="0.1" value="${node.turbineTimeConstant || 1}"><span class="tc-value">${(node.turbineTimeConstant || 1).toFixed(1)}s</span></div></div>
-        <div class="settings-row sep-top"><label class="settings-label">Mode</label><div class="settings-slider-group"><select class="gen-mode-select"><option value="balancing" ${node.mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option><option value="fcr-only" ${node.mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option><option value="fixed" ${node.mode === 'fixed' ? 'selected' : ''}>Fixed</option></select></div></div>
-      </div>
-      <div class="settings-resize-handle"></div>`;
+        <div class="settings-row"><label class="settings-label">Baseline Contract</label>
+          <div class="settings-slider-group">
+            <input type="range" class="baseline-slider" min="0" max="${node.rating || 100}" value="${node.baselineContract || 0}">
+            <span class="baseline-value">${Math.round(node.baselineContract || 0)} MW</span>
+          </div>
+        </div>
+        <div class="settings-row"><label class="settings-label">FCR Headroom</label>
+          <div class="settings-slider-group">
+            <input type="range" class="fcr-headroom-slider" min="0" max="${node.rating || 100}" value="${node.fcrHeadroom || 10}">
+            <span class="fcr-headroom-value">${Math.round(node.fcrHeadroom || 10)} MW</span>
+          </div>
+        </div>
+        <div class="settings-row"><label class="settings-label">aFRR Range</label>
+          <div class="settings-slider-group" style="gap:4px;">
+            <span style="font-size:12px;color:#888;">Min</span>
+            <input type="number" class="afrr-min-input" min="0" max="${node.rating || 100}" value="${node.afrrMin || 0}" style="width:60px;padding:3px 6px;border:1px solid #d6d2c8;border-radius:4px;font-size:12px;">
+            <span style="font-size:12px;color:#888;">Max</span>
+            <input type="number" class="afrr-max-input" min="0" max="${node.rating || 100}" value="${node.afrrMax || node.rating || 100}" style="width:60px;padding:3px 6px;border:1px solid #d6d2c8;border-radius:4px;font-size:12px;">
+          </div>
+        </div>
+        <div class="settings-row"><label class="settings-label">Rating</label>
+          <div class="settings-slider-group">
+            <input type="range" class="rating-slider" min="1" max="5000" value="${node.rating || 100}">
+            <span class="rating-value">${node.rating || 100} MVA</span>
+          </div>
+        </div>
+        <div class="settings-row"><label class="settings-label">Inertia H</label>
+          <div class="settings-slider-group">
+            <input type="range" class="inertia-slider" min="0" max="20" step="0.5" value="${node.inertia || 5}">
+            <span class="inertia-value">${(node.inertia || 5).toFixed(1)}s</span>
+          </div>
+        </div>
+        <div class="settings-row"><label class="settings-label">Droop</label>
+          <div class="settings-slider-group">
+            <input type="range" class="droop-slider" min="0.5" max="20" step="0.5" value="${(node.droop || 0.04) * 100}">
+            <span class="droop-value">${(node.droop || 0.04) * 100}%</span>
+          </div>
+        </div>
+        <div class="settings-row"><label class="settings-label">Turbine TC</label>
+          <div class="settings-slider-group">
+            <input type="range" class="tc-slider" min="0.2" max="5" step="0.1" value="${node.turbineTimeConstant || 1}">
+            <span class="tc-value">${(node.turbineTimeConstant || 1).toFixed(1)}s</span>
+          </div>
+        </div>
+        <div class="settings-row sep-top"><label class="settings-label">Mode</label>
+          <div class="settings-slider-group">
+            <select class="gen-mode-select">
+              <option value="balancing" ${node.mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option>
+              <option value="fcr-only" ${node.mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option>
+              <option value="fixed" ${node.mode === 'fixed' ? 'selected' : ''}>Fixed</option>
+            </select>
+          </div>
+        </div>
+      </div>`;
 
     entry.outputEl = panel.querySelector('.gen-output');
 
-    const dispatchSlider = panel.querySelector('.dispatch-slider'), dispatchVal = panel.querySelector('.dispatch-value');
-    entry.dispatchSlider = dispatchSlider;
-    entry.dispatchVal = dispatchVal;
-    dispatchSlider.addEventListener('input', () => { const v = Math.min(parseInt(dispatchSlider.value, 10), node.rating); dispatchVal.textContent = v; node.dispatchTarget = v; });
-    dispatchSlider.addEventListener('change', () => persist());
-
-    const rampSlider = panel.querySelector('.ramp-slider'), rampVal = panel.querySelector('.ramp-value');
-    rampSlider.addEventListener('input', () => { const v = parseInt(rampSlider.value, 10); rampVal.textContent = v; node.rampRate = v; });
-    rampSlider.addEventListener('change', () => persist());
-
-    const ratSlider = panel.querySelector('.rating-slider'), ratVal = panel.querySelector('.rating-value');
-    ratSlider.addEventListener('input', () => {
-      const v = parseInt(ratSlider.value, 10);
-      ratVal.textContent = v;
-      node.rating = v;
-      if (node.dispatchTarget > v) {
-        node.dispatchTarget = v;
-        dispatchSlider.max = v;
-        dispatchSlider.value = v;
-        dispatchVal.textContent = v;
-      } else {
-        dispatchSlider.max = v;
-      }
+    // Baseline Contract slider
+    const baselineSlider = panel.querySelector('.baseline-slider');
+    const baselineVal = panel.querySelector('.baseline-value');
+    entry.baselineSlider = baselineSlider;
+    entry.baselineVal = baselineVal;
+    baselineSlider.addEventListener('input', () => {
+      const v = parseFloat(baselineSlider.value);
+      baselineVal.textContent = Math.round(v) + ' MW';
+      node.baselineContract = v;
     });
-    ratSlider.addEventListener('change', () => persist());
+    baselineSlider.addEventListener('change', () => persist());
 
-    const inSlider = panel.querySelector('.inertia-slider'), inVal = panel.querySelector('.inertia-value');
-    inSlider.addEventListener('input', () => { const v = parseFloat(inSlider.value); inVal.textContent = v.toFixed(1); node.inertia = v; });
-    inSlider.addEventListener('change', () => persist());
+    // FCR Headroom slider
+    const fcrSlider = panel.querySelector('.fcr-headroom-slider');
+    const fcrVal = panel.querySelector('.fcr-headroom-value');
+    fcrSlider.addEventListener('input', () => {
+      const v = parseFloat(fcrSlider.value);
+      fcrVal.textContent = Math.round(v) + ' MW';
+      node.fcrHeadroom = v;
+    });
+    fcrSlider.addEventListener('change', () => persist());
 
-    const drSlider = panel.querySelector('.droop-slider'), drVal = panel.querySelector('.droop-value');
-    drSlider.addEventListener('input', () => { const v = parseFloat(drSlider.value); drVal.textContent = v.toFixed(1) + '%'; node.droop = v / 100; });
-    drSlider.addEventListener('change', () => persist());
+    // aFRR min/max number inputs
+    const afrrMinEl = panel.querySelector('.afrr-min-input');
+    const afrrMaxEl = panel.querySelector('.afrr-max-input');
+    afrrMinEl.addEventListener('change', () => { node.afrrMin = parseFloat(afrrMinEl.value) || 0; persist(); });
+    afrrMaxEl.addEventListener('change', () => { node.afrrMax = parseFloat(afrrMaxEl.value) || (node.rating || 100); persist(); });
 
-    const tcSlider = panel.querySelector('.tc-slider'), tcVal = panel.querySelector('.tc-value');
-    tcSlider.addEventListener('input', () => { const v = parseFloat(tcSlider.value); tcVal.textContent = v.toFixed(1) + 's'; node.turbineTimeConstant = v; });
+    // Rating slider
+    const ratingSlider = panel.querySelector('.rating-slider');
+    const ratingVal = panel.querySelector('.rating-value');
+    ratingSlider.addEventListener('input', () => {
+      const v = parseFloat(ratingSlider.value);
+      ratingVal.textContent = v + ' MVA';
+      node.rating = v;
+      baselineSlider.max = v;
+      fcrSlider.max = v;
+      afrrMinEl.max = v;
+      afrrMaxEl.max = v;
+    });
+    ratingSlider.addEventListener('change', () => persist());
+
+    // Inertia slider
+    const inertiaSlider = panel.querySelector('.inertia-slider');
+    const inertiaVal = panel.querySelector('.inertia-value');
+    inertiaSlider.addEventListener('input', () => {
+      const v = parseFloat(inertiaSlider.value);
+      inertiaVal.textContent = v.toFixed(1) + 's';
+      node.inertia = v;
+    });
+    inertiaSlider.addEventListener('change', () => persist());
+
+    // Droop slider
+    const droopSlider = panel.querySelector('.droop-slider');
+    const droopVal = panel.querySelector('.droop-value');
+    droopSlider.addEventListener('input', () => {
+      const d = parseFloat(droopSlider.value);
+      droopVal.textContent = d + '%';
+      node.droop = d / 100;
+    });
+    droopSlider.addEventListener('change', () => persist());
+
+    // Turbine TC slider
+    const tcSlider = panel.querySelector('.tc-slider');
+    const tcVal = panel.querySelector('.tc-value');
+    tcSlider.addEventListener('input', () => {
+      const v = parseFloat(tcSlider.value);
+      tcVal.textContent = v.toFixed(1) + 's';
+      node.turbineTimeConstant = v;
+    });
     tcSlider.addEventListener('change', () => persist());
 
-    // Mode selector
+    // Mode select
     const modeSelect = panel.querySelector('.gen-mode-select');
     if (modeSelect) {
       modeSelect.addEventListener('change', () => {
@@ -984,8 +1053,8 @@ function updateStatsPanel() {
   html += '<div class="stats-section">';
   html += '<div class="stats-section-title">⚡ Supply</div>';
   for (const gen of gens) {
-    const base = gen._baseSetpoint || 0;
-    const fcr = (gen.mw || 0) - base;
+    const base = gen.baselineContract || 0;
+    const fcr = (gen.mw || 0) - base - (gen.agcOffset || 0);
     const tag = gen.mode === 'fixed' ? '<span class="merchant-tag">🔒</span>' : (gen.mode === 'fcr-only' ? '<span class="merchant-tag">⚡FCR</span>' : '');
     html += '<div class="stats-row">';
     html += '<span><span class="gen-name">' + (gen.shortId || gen.id.slice(-4)) + '</span>' + tag + '</span>';
@@ -993,7 +1062,8 @@ function updateStatsPanel() {
     html += '</div>';
     if (Math.abs(fcr) > 0.5) {
       html += '<div class="stats-row" style="padding-left:12px;font-size:12px;color:#999;">';
-      html += '<span>base ' + Math.round(base) + ' + FCR ' + (fcr > 0 ? '+' : '') + Math.round(fcr) + '</span>';
+      const agcComponent = Math.round(gen.agcOffset || 0);
+      html += '<span>base ' + Math.round(base) + ' + FCR ' + (fcr >= 0 ? '+' : '') + Math.round(fcr) + ' + AGC ' + (agcComponent >= 0 ? '+' : '') + agcComponent + '</span>';
       html += '</div>';
     }
   }
