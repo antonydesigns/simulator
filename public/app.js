@@ -306,7 +306,7 @@ function simTick() {
           }
           // Energy-neutral washout: decay AGC offset toward 0 when freq is stable
           if (st.energyNeutral && Math.abs(freqErr) < 0.01) {
-            st.agcOffset = (st.agcOffset || 0) * Math.exp(-dt / 20);
+            st.agcOffset = (st.agcOffset || 0) * Math.exp(-dt / 5);
             if (Math.abs(st.agcOffset) < 0.001) st.agcOffset = 0;
           }
         }
