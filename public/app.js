@@ -2004,7 +2004,7 @@ function openSettings(nodeId) {
       <div class="settings-resize-handle"></div>`;
 
     const slider = panel.querySelector('.mw-slider'), valEl = panel.querySelector('.mw-value');
-    slider.addEventListener('input', () => { const v = parseInt(slider.value, 10); valEl.textContent = v; node.mw = v; draw(); });
+    slider.addEventListener('input', () => { const v = parseInt(slider.value, 10); valEl.textContent = v; node.mw = v; node.baseMw = v; draw(); });
     slider.addEventListener('change', () => persist());
   }
 
