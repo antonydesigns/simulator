@@ -2289,12 +2289,10 @@ function updateStatsPanel() {
     html += '</div>';
     const dev = (islandFreq - 50) / 50;
     const govMod = -(1 / (gen.droop || 0.04)) * dev * (gen.rating || 100);
-    const fcrHeadroom = gen.fcrHeadroom || 10;
-    const fcrResponse = Math.max(-fcrHeadroom, Math.min(fcrHeadroom, govMod));
     const agcComp = gen.agcOffset || 0;
-    if (Math.abs(fcrResponse) > 0.5 || Math.abs(agcComp) > 0.5) {
+    if (Math.abs(govMod) > 0.5 || Math.abs(agcComp) > 0.5) {
       html += '<div class="stats-row" style="padding-left:12px;font-size:12px;color:#999;">';
-      html += '<span>base ' + Math.round(base) + ' + FCR ' + (fcrResponse >= 0 ? '+' : '') + Math.round(fcrResponse) + ' + AGC ' + (agcComp >= 0 ? '+' : '') + Math.round(agcComp) + '</span>';
+      html += '<span>base ' + Math.round(base) + ' + FCR ' + (govMod >= 0 ? '+' : '') + Math.round(govMod) + ' + AGC ' + (agcComp >= 0 ? '+' : '') + Math.round(agcComp) + '</span>';
       html += '</div>';
     }
   }
@@ -2326,7 +2324,7 @@ function updateStatsPanel() {
       const sAgc = st.agcOffset || 0;
       if (Math.abs(sGovMod) > 0.5 || Math.abs(sAgc) > 0.5) {
         html += '<div class="stats-row" style="padding-left:12px;font-size:12px;color:#999;">';
-        html += '<span>base ' + Math.round(bc) + ' + droop ' + (sGovMod >= 0 ? '+' : '') + Math.round(sGovMod) + ' + AGC ' + (sAgc >= 0 ? '+' : '') + Math.round(sAgc) + '</span>';
+        html += '<span>base ' + Math.round(bc) + ' + FCR ' + (sGovMod >= 0 ? '+' : '') + Math.round(sGovMod) + ' + AGC ' + (sAgc >= 0 ? '+' : '') + Math.round(sAgc) + '</span>';
         html += '</div>';
       }
     }
