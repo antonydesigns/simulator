@@ -97,20 +97,20 @@ function simTick() {
     const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
     const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
 
-    // --- Handle stranded islands ---
+    // --- Handle stranded island types ---
     const hasGen = gens.length > 0, hasLoad = loads.length > 0, hasStor = storages.length > 0;
     if (hasGen && !hasLoad && !hasStor) {
-      // Gen-only island: no demand → ramp output to 0, zero all line flows
       for (const gen of gens) gen.mw = Math.max(0, (gen.mw || 0) - 50 * dt);
       for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
     }
     if (!hasGen && !hasStor && hasLoad) {
-      // Load-only island: no supply → loads get nothing, zero all line flows
       for (const load of loads) load.mw = 0;
       for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
     }
+
+    // Note: stranded loads within mixed islands are zeroed after the stranded detection step, below
 
     // --- Step 2: Storage FCR ---
     for (const st of storages) {
@@ -221,6 +221,30 @@ function simTick() {
 
   // Update global state.frequency for backward compat (first network's freq)
   state.frequency = state.networks.length > 0 ? state.networks[0].freq : 50;
+
+  // --- Detect stranded loads (within-island components with load but no gen) ---
+  state.strandedLoadIds = new Set();
+  for (const net of state.networks) {
+    const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+    const activeConns = state.connections.filter(c =>
+      !c.tripped && net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)
+    );
+    const adj = {};
+    for (const n of netNodes) adj[n.id] = [];
+    for (const c of activeConns) { adj[c.sourceId].push(c.targetId); adj[c.targetId].push(c.sourceId); }
+    const visited = new Set();
+    for (const n of netNodes) {
+      if (visited.has(n.id) || n.type !== 'generator') continue;
+      const q = [n.id]; visited.add(n.id);
+      while (q.length) {
+        const id = q.shift();
+        for (const nb of (adj[id] || [])) { if (!visited.has(nb)) { visited.add(nb); q.push(nb); } }
+      }
+    }
+    for (const n of netNodes) {
+      if (n.type === 'load' && !visited.has(n.id)) { state.strandedLoadIds.add(n.id); n.mw = 0; }
+    }
+  }
 
   let changed = true;
 
@@ -711,11 +735,53 @@ function drawSelectionRect() {
   ctx.fillStyle = 'rgba(122,158,192,0.06)'; ctx.fillRect(l, t, w, h);
 }
 
+function drawStrandedIndicators() {
+  if (!state.strandedLoadIds || state.strandedLoadIds.size === 0) return;
+  const blink = Math.sin(Date.now() / 300) > 0;
+  const dpr = window.devicePixelRatio || 1;
+  const ww = window.innerWidth, wh = window.innerHeight;
+  const pad = 40;
+
+  for (const id of state.strandedLoadIds) {
+    const load = state.nodes.find(n => n.id === id);
+    if (!load) continue;
+    const sp = worldToScreen(load.x, load.y);
+    const onScreen = sp.x >= 0 && sp.x <= ww && sp.y >= 0 && sp.y <= wh;
+
+    if (onScreen) {
+      // Warning triangle above the node
+      if (blink) {
+        ctx.font = '16px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillText('⚠', sp.x, sp.y - 8);
+      }
+    } else {
+      // Off-screen arrow at edge
+      const angle = Math.atan2(load.y - state.view.y / state.view.scale, load.x - state.view.x / state.view.scale);
+      let ex = ww / 2, ey = wh / 2;
+      const cosA = Math.cos(angle), sinA = Math.sin(angle);
+      const t = Math.min(
+        cosA > 0 ? (ww - pad - ex) / cosA : cosA < 0 ? -(ex - pad) / -cosA : Infinity,
+        sinA > 0 ? (wh - pad - ey) / sinA : sinA < 0 ? -(ey - pad) / -sinA : Infinity
+      );
+      if (!isFinite(t)) continue;
+      ex += cosA * t; ey += sinA * t;
+      if (blink) {
+        ctx.font = '20px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#e74c3c';
+        ctx.fillText('⚠', ex, ey);
+      }
+    }
+  }
+}
+
 function draw() {
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-  drawGrid(); drawIslands(); drawConnections(); drawNodes(); drawPendingLine(); drawHoverDot(); drawSelectionRect();
+  drawGrid(); drawIslands(); drawConnections(); drawNodes(); drawPendingLine(); drawHoverDot(); drawSelectionRect(); drawStrandedIndicators();
 }
 
 // ─── Islands ──────────────────────────────────────────────────────────
@@ -862,81 +928,109 @@ function hitNode(wx, wy) {
 // ─── DC Power Flow Solver ─────────────────────────────────────────────
 
 function solveDCPowerFlow(net) {
-  const nodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
-  if (nodes.length < 2) return;
+  const allNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+  if (allNodes.length < 2) return;
 
-  const conns = state.connections.filter(c =>
+  const allConns = state.connections.filter(c =>
     !c.tripped && net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId) && (c.reactance || 0) > 0
   );
-  if (conns.length === 0) return;
+  if (allConns.length === 0) return;
 
-  // Build bus index
-  const busIdx = {};
-  nodes.forEach((n, i) => { busIdx[n.id] = i; });
-  const nB = nodes.length;
-
-  // Build B' matrix and P vector
-  const B = Array.from({ length: nB }, () => new Float64Array(nB));
-  const P = new Float64Array(nB);
-
-  for (const c of conns) {
-    const i = busIdx[c.sourceId], j = busIdx[c.targetId];
-    const bij = 1 / c.reactance;
-    B[i][j] -= bij; B[j][i] -= bij;
-    B[i][i] += bij; B[j][j] += bij;
+  // Build adjacency from active connections to find connected subgraphs
+  const adj = {};
+  for (const n of allNodes) adj[n.id] = [];
+  for (const c of allConns) {
+    adj[c.sourceId].push(c.targetId);
+    adj[c.targetId].push(c.sourceId);
   }
 
-  for (const n of nodes) {
-    const idx = busIdx[n.id];
-    if (n.type === 'generator') P[idx] += (n.mw || 0);
-    else if (n.type === 'load') P[idx] -= (n.mw || 0);
-    else if (n.type === 'storage') P[idx] -= (n.mwResponse || 0);
+  // Find connected components within the active graph
+  const visited = new Set();
+  const components = []; // each: { nodeIds: Set, conns: [] }
+  for (const n of allNodes) {
+    if (visited.has(n.id)) continue;
+    const nodeIds = new Set();
+    const queue = [n.id]; visited.add(n.id);
+    while (queue.length) {
+      const id = queue.shift(); nodeIds.add(id);
+      for (const neighbor of (adj[id] || [])) {
+        if (!visited.has(neighbor)) { visited.add(neighbor); queue.push(neighbor); }
+      }
+    }
+    const compNodes = allNodes.filter(n => nodeIds.has(n.id));
+    const compConns = allConns.filter(c => nodeIds.has(c.sourceId) && nodeIds.has(c.targetId));
+    if (compNodes.length >= 2 && compConns.length > 0) components.push({ nodes: compNodes, conns: compConns });
   }
 
-  // Slack bus — first generator
-  let slack = nodes.findIndex(n => n.type === 'generator');
-  if (slack < 0) slack = 0;
+  // Solve each component independently
+  for (const comp of components) {
+    const { nodes, conns } = comp;
+    const nB = nodes.length;
+    const busIdx = {};
+    nodes.forEach((n, i) => { busIdx[n.id] = i; });
 
-  // Remove slack: map reducedIdx -> originalIdx
-  const map = [];
-  for (let i = 0; i < nB; i++) if (i !== slack) map.push(i);
-  const m = map.length;
-  if (m === 0) return;
+    const B = Array.from({ length: nB }, () => new Float64Array(nB));
+    const P = new Float64Array(nB);
 
-  const Br = Array.from({ length: m }, () => new Float64Array(m));
-  const Pr = new Float64Array(m);
-  for (let ri = 0; ri < m; ri++) {
-    for (let rj = 0; rj < m; rj++) Br[ri][rj] = B[map[ri]][map[rj]];
-    Pr[ri] = P[map[ri]];
-  }
+    for (const c of conns) {
+      const i = busIdx[c.sourceId], j = busIdx[c.targetId];
+      const bij = 1 / c.reactance;
+      B[i][j] -= bij; B[j][i] -= bij;
+      B[i][i] += bij; B[j][j] += bij;
+    }
 
-  // Gaussian elimination
-  for (let col = 0; col < m - 1; col++) {
-    let pivot = col;
-    for (let r = col + 1; r < m; r++) if (Math.abs(Br[r][col]) > Math.abs(Br[pivot][col])) pivot = r;
-    if (Math.abs(Br[pivot][col]) < 1e-12) continue;
-    if (pivot !== col) { [Br[col], Br[pivot]] = [Br[pivot], Br[col]]; [Pr[col], Pr[pivot]] = [Pr[pivot], Pr[col]]; }
-    for (let r = col + 1; r < m; r++) {
-      const f = Br[r][col] / Br[col][col];
-      for (let c = col; c < m; c++) Br[r][c] -= f * Br[col][c];
-      Pr[r] -= f * Pr[col];
+    for (const n of nodes) {
+      const idx = busIdx[n.id];
+      if (n.type === 'generator') P[idx] += (n.mw || 0);
+      else if (n.type === 'load') P[idx] -= (n.mw || 0);
+      else if (n.type === 'storage') P[idx] -= (n.mwResponse || 0);
+    }
+
+    let slack = nodes.findIndex(n => n.type === 'generator');
+    if (slack < 0) slack = 0;
+
+    const map = [];
+    for (let i = 0; i < nB; i++) if (i !== slack) map.push(i);
+    const m = map.length;
+    if (m === 0) continue;
+
+    const Br = Array.from({ length: m }, () => new Float64Array(m));
+    const Pr = new Float64Array(m);
+    for (let ri = 0; ri < m; ri++) {
+      for (let rj = 0; rj < m; rj++) Br[ri][rj] = B[map[ri]][map[rj]];
+      Pr[ri] = P[map[ri]];
+    }
+
+    for (let col = 0; col < m - 1; col++) {
+      let pivot = col;
+      for (let r = col + 1; r < m; r++) if (Math.abs(Br[r][col]) > Math.abs(Br[pivot][col])) pivot = r;
+      if (Math.abs(Br[pivot][col]) < 1e-12) continue;
+      if (pivot !== col) { [Br[col], Br[pivot]] = [Br[pivot], Br[col]]; [Pr[col], Pr[pivot]] = [Pr[pivot], Pr[col]]; }
+      for (let r = col + 1; r < m; r++) {
+        const f = Br[r][col] / Br[col][col];
+        for (let c = col; c < m; c++) Br[r][c] -= f * Br[col][c];
+        Pr[r] -= f * Pr[col];
+      }
+    }
+
+    const theta = new Float64Array(nB);
+    for (let i = m - 1; i >= 0; i--) {
+      let s = Pr[i];
+      for (let j = i + 1; j < m; j++) s -= Br[i][j] * theta[map[j]];
+      theta[map[i]] = Br[i][i] !== 0 ? s / Br[i][i] : 0;
+    }
+
+    for (const c of conns) {
+      const i = busIdx[c.sourceId], j = busIdx[c.targetId];
+      const flow = (theta[i] - theta[j]) / c.reactance;
+      c.mw = flow;
+      c.loadingPct = (c.thermalLimit > 0) ? (Math.abs(flow) / c.thermalLimit) * 100 : 0;
     }
   }
 
-  // Back substitution
-  const theta = new Float64Array(nB);
-  for (let i = m - 1; i >= 0; i--) {
-    let s = Pr[i];
-    for (let j = i + 1; j < m; j++) s -= Br[i][j] * theta[map[j]];
-    theta[map[i]] = Br[i][i] !== 0 ? s / Br[i][i] : 0;
-  }
-
-  // Compute line flows
-  for (const c of conns) {
-    const i = busIdx[c.sourceId], j = busIdx[c.targetId];
-    const flow = (theta[i] - theta[j]) / c.reactance;
-    c.mw = flow;
-    c.loadingPct = (c.thermalLimit > 0) ? (Math.abs(flow) / c.thermalLimit) * 100 : 0;
+  // Any active connection not in a solved component → 0 flow
+  for (const c of allConns) {
+    if (c.mw === undefined) { c.mw = 0; c.loadingPct = 0; }
   }
 }
 
@@ -968,7 +1062,6 @@ function findNetworks() {
   const adj = {};
   for (const n of state.nodes) adj[n.id] = [];
   for (const c of state.connections) {
-    if (c.tripped) continue;
     if (!adj[c.sourceId]) adj[c.sourceId] = [];
     if (!adj[c.targetId]) adj[c.targetId] = [];
     adj[c.sourceId].push(c.targetId);
