@@ -1965,7 +1965,6 @@ function openSettings(nodeId) {
       <div class="settings-header"><span class="settings-title">Storage ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
         <div class="settings-row"><label class="settings-label">State of Charge</label><div class="settings-slider-group"><input type="range" class="soc-slider" min="0" max="${cap}" step="0.1" value="${socVal}"><span class="settings-value-display storage-soc">${socVal} MWh</span></div></div>
-        <div class="settings-row"><label class="settings-label">Power</label><div class="settings-value-display storage-mw-response">0 MW</div></div>
         <div class="settings-row sep-top"><label class="settings-label">Mode</label>
           <div class="settings-slider-group">
             <select class="storage-mode-select">
