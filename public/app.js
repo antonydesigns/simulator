@@ -7,11 +7,13 @@ const state = {
   selectedConnIds: new Set(),
   pendingSourceId: null,
   hoverLine: null,
-  lineMode: 'junction', // 'junction' or 'status'
+  lineMode: 'junction',
   view: { x: 0, y: 0, scale: 1 },
   spaceDown: false,
   frequency: 50,
   networks: [],
+  smp: null,
+  marketLoad: 0,
   clipboard: null, // { nodes: [...copied nodes...], connections: [...] }
   lineClipboard: null, // { reactance, thermalLimit } from a copied line
 };
@@ -44,6 +46,7 @@ const sim = {
   events: [],
   simTime: 0,
   speed: 1,
+  marketTimer: 0,
 };
 
 function recomputeNetworks() {
@@ -76,6 +79,34 @@ function demandCurve(t) {
   return daily * weekend;
 }
 
+// ─── Merit Order Dispatch ────────────────────────────────────────────────
+
+function dispatchMeritOrder() {
+  const allGens = state.nodes.filter(n => n.type === 'generator' && !n.tripped);
+  // Sort all non-fixed gens by bid price (cheapest first)
+  const merit = allGens.filter(g => g.mode !== 'fixed').sort((a, b) => a.bidPrice - b.bidPrice);
+  const totalLoad = state.nodes.filter(n => n.type === 'load').reduce((s, l) => s + (l.mw || 0), 0);
+
+  // Reset baselines for merchant + balancing gens (fixed gens keep manual baseline)
+  for (const gen of allGens) {
+    if (gen.mode !== 'fixed') gen.baselineContract = 0;
+  }
+
+  let remaining = totalLoad;
+  let smp = 0;
+
+  for (const gen of merit) {
+    const qty = gen.bidQty || gen.rating || 100;
+    const dispatch = Math.min(remaining, qty);
+    gen.baselineContract = Math.max(0, dispatch);
+    remaining -= dispatch;
+    if (dispatch > 0) smp = gen.bidPrice;
+  }
+
+  state.smp = remaining <= 0 ? smp : null; // null = insufficient capacity
+  state.marketLoad = totalLoad;
+}
+
 function simTick() {
   recomputeNetworks();
   const f0 = 50;
@@ -102,7 +133,10 @@ function simTick() {
     // --- Step 1: Governor droop + baseline + AGC offset ---
     for (const gen of gens) {
       let totalTarget;
-      if (gen.mode === 'fixed') {
+      if (gen.mode === 'merchant') {
+        // Merchant gens just follow the merit order baseline — no FCR/AGC
+        totalTarget = gen.baselineContract || 0;
+      } else if (gen.mode === 'fixed') {
         totalTarget = gen.baselineContract || 0;
       } else {
         const droop = gen.droop || 0.04;
@@ -111,10 +145,8 @@ function simTick() {
         const govMod = -(1 / droop) * dev * rating;
         totalTarget = (gen.baselineContract || 0) + govMod + (gen.agcOffset || 0);
       }
-      const afrrMin = gen.afrrMin !== undefined ? gen.afrrMin : 0;
-      const afrrMax = gen.afrrMax !== undefined ? gen.afrrMax : (gen.rating || Infinity);
-      const maxMw = gen.rating || Infinity;
-      totalTarget = Math.max(0, afrrMin, Math.min(afrrMax, maxMw, totalTarget));
+      const rating = gen.rating || Infinity;
+      totalTarget = Math.max(0, Math.min(rating, totalTarget));
       const current = gen.mw || 0;
       const T = totalTarget < current ? (gen.rampDownTC || 0.3) : (gen.turbineTimeConstant || 1);
       gen.mw = current + (totalTarget - current) * dt / T;
@@ -133,6 +165,13 @@ function simTick() {
         load.mw = Math.round((load.noiseMin || 100) + ((load.noiseMax || 200) - (load.noiseMin || 100)) * mult * (1 + load._noiseDrift));
         load.baseMw = load.mw;
       }
+    }
+
+    // --- Market dispatch (15 pattern-minutes = 900 pattern-seconds) ---
+    sim.marketTimer = (sim.marketTimer || 0) + dt;
+    if (sim.marketTimer >= 900) {
+      sim.marketTimer = 0;
+      dispatchMeritOrder();
     }
 
     const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
@@ -305,18 +344,18 @@ function simTick() {
     if (balancingGens.length > 0) {
       const agcRateLimit = 5;
       const maxDelta = agcRateLimit * dt;
-      const totalHeadroom = balancingGens.reduce((s, g) => s + Math.max(0, (g.afrrMax !== undefined ? g.afrrMax : (g.rating || 100)) - (g.baselineContract || 0) - (g.fcrHeadroom || 10)), 0);
+      const totalHeadroom = balancingGens.reduce((s, g) => s + Math.max(0, (g.rating || 100) - (g.baselineContract || 0) - (g.fcrHeadroom || 10)), 0);
       if (totalHeadroom > 0) {
         const totalAgc = 50 * freqErr * dt;
         for (const gen of balancingGens) {
-          const upwardHeadroom = Math.max(0, (gen.afrrMax !== undefined ? gen.afrrMax : (gen.rating || 100)) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10));
+          const upwardHeadroom = Math.max(0, (gen.rating || 100) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10));
           const share = upwardHeadroom / totalHeadroom;
           const agcDelta = totalAgc * share;
           const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
           if (Math.abs(clamped) > 0.0001) {
             gen.agcOffset = (gen.agcOffset || 0) + clamped;
             const minAgc = (gen.fcrHeadroom || 10) - (gen.baselineContract || 0);
-            const maxAgc = (gen.rating || 100) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10);
+            const maxAgc = (gen.rating || 100) - (gen.baselineContract || 0);
             gen.agcOffset = Math.max(minAgc, Math.min(maxAgc, gen.agcOffset));
           }
         }
@@ -449,7 +488,7 @@ function simTick() {
   // --- Step 5a: Update FCR / aFRR status badges ---
   {
     const fcrBadge = document.getElementById('fcr-badge');
-    const afrrBadge = document.getElementById('afrr-badge');
+    const agcBadge = document.getElementById('agc-badge');
     const allGens = state.nodes.filter(n => n.type === 'generator');
     const fcrGens = allGens.filter(g => g.mode === 'balancing' || g.mode === 'fcr-only');
     const fcrActive = fcrGens.some(g => {
@@ -459,8 +498,8 @@ function simTick() {
     });
     fcrBadge.className = 'status-badge ' + (fcrActive ? 'fcr-active' : 'fcr-inactive');
     const balancingGens = allGens.filter(g => g.mode === 'balancing');
-    const afrrActive = Math.abs(f0 - state.frequency) > 0.001 && balancingGens.length > 0;
-    afrrBadge.className = 'status-badge ' + (afrrActive ? 'afrr-active' : 'afrr-inactive');
+    const agcActive = Math.abs(f0 - state.frequency) > 0.001 && balancingGens.length > 0;
+    agcBadge.className = 'status-badge ' + (agcActive ? 'agc-active' : 'agc-inactive');
   }
 
   // --- Step 5b: Refresh stats panel ---
@@ -482,8 +521,8 @@ function simTick() {
         entry.nodes[node.id].rating = node.rating || 100;
         entry.nodes[node.id].droop = node.droop || 0.04;
         entry.nodes[node.id].fcrHeadroom = node.fcrHeadroom || 10;
-        entry.nodes[node.id].afrrMin = node.afrrMin || 0;
-        entry.nodes[node.id].afrrMax = node.afrrMax !== undefined ? node.afrrMax : (node.rating || 100);
+        entry.nodes[node.id].bidPrice = node.bidPrice || 50;
+        entry.nodes[node.id].bidQty = node.bidQty || node.rating || 100;
         entry.nodes[node.id].turbineTimeConstant = node.turbineTimeConstant || 1;
       }
       if (node.type === 'storage') {
@@ -535,6 +574,14 @@ function restartSim() {
   sim.captureAccum = 0;
   sim.events = [];
   sim.simTime = 0;
+  sim.marketTimer = 0;
+  // Reset load shedding first so loads have MW values for market dispatch
+  for (const load of state.nodes.filter(n => n.type === 'load')) {
+    load.shedPct = 0;
+    if (load.baseMw) load.mw = load.baseMw;
+  }
+  // First dispatch — sets every gen's baselineContract from merit order
+  dispatchMeritOrder();
   for (const gen of state.nodes.filter(n => n.type === 'generator')) {
     gen.agcOffset = 0;
     gen.mw = gen.baselineContract || 0;
@@ -549,11 +596,6 @@ function restartSim() {
   }
   // Reset tripped lines
   for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
-  // Reset load shedding
-  for (const load of state.nodes.filter(n => n.type === 'load')) {
-    load.shedPct = 0;
-    if (load.baseMw) load.mw = load.baseMw;
-  }
   state.frequency = 50;
   state.networks = findNetworks();
   for (const net of state.networks) { net.freq = 50; net.freqPrev = 50; }
@@ -961,6 +1003,23 @@ function drawFrequencyHud() {
     const sign = dev > 0 ? '+' : '';
     ctx.fillText(label || (sign + dev.toFixed(3) + ' Hz deviation'), rx + bw / 2, ry + bh / 2 + 12);
 
+    ry += bh + 4;
+  }
+
+  // Wholesale price (SMP) display
+  if (state.smp !== null) {
+    ctx.fillStyle = 'rgba(240, 236, 228, 0.92)';
+    ctx.beginPath(); roundRect(rx, ry, bw, bh, 8); ctx.fill();
+    ctx.strokeStyle = '#d6d2c8'; ctx.lineWidth = 1;
+    ctx.beginPath(); roundRect(rx, ry, bw, bh, 8); ctx.stroke();
+    ctx.fillStyle = '#2c7a2c';
+    ctx.font = 'bold 24px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('$' + state.smp.toFixed(1) + '/MWh', rx + bw / 2, ry + bh / 2 - 2);
+    ctx.fillStyle = '#8a867e';
+    ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.fillText(state.marketLoad.toFixed(0) + ' MW load', rx + bw / 2, ry + bh / 2 + 12);
     ry += bh + 4;
   }
 }
@@ -1525,7 +1584,7 @@ function addNode(type, wx, wy) {
   if (type === 'load') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10, baseMw: 10, shedPct: 0, noiseEnabled: false, noiseMin: 100, noiseMax: 200, noisePct: 10 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, tripped: false, freqTimer: 0 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, bidPrice: 50, bidQty: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, tripped: false, freqTimer: 0 };
   } else if (type === 'storage') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 500, dischargeRate: 500, maxCapacity: 100, mode: 'balancing', baselineContract: 0, fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0, agcOffset: 0 };
   } else {
@@ -1627,8 +1686,8 @@ async function load() {
         if (n.rampRate !== undefined) delete n.rampRate;
         if (n.baselineContract === undefined) n.baselineContract = 0;
         if (n.fcrHeadroom === undefined) n.fcrHeadroom = 10;
-        if (n.afrrMin === undefined) n.afrrMin = 0;
-        if (n.afrrMax === undefined) n.afrrMax = n.rating || 100;
+        if (n.bidPrice === undefined) n.bidPrice = 50;
+        if (n.bidQty === undefined) n.bidQty = n.rating || 100;
         if (n.agcOffset === undefined) n.agcOffset = 0;
         if (n.rating === undefined) n.rating = 100;
         if (n.inertia === undefined) n.inertia = 5;
@@ -1638,7 +1697,7 @@ async function load() {
         if (n.tripped === undefined) n.tripped = false;
         if (n.freqTimer === undefined) n.freqTimer = 0;
         // Migrate legacy merchantLock → mode
-        if (n.merchantLock !== undefined) { n.mode = n.merchantLock ? 'fixed' : 'balancing'; delete n.merchantLock; }
+        if (n.merchantLock !== undefined) { n.mode = n.merchantLock ? 'merchant' : 'balancing'; delete n.merchantLock; }
         if (n.mode === undefined) n.mode = 'balancing';
         // Assign shortId if missing (legacy grid or freshly added)
         if (!n.shortId) n.shortId = shortId(n.type);
@@ -2117,7 +2176,7 @@ document.addEventListener('keydown', (e) => {
     for (const t of targets) {
       if (src.type === 'generator') {
         t.rating = src.rating; t.inertia = src.inertia; t.droop = src.droop;
-        t.fcrHeadroom = src.fcrHeadroom; t.afrrMin = src.afrrMin; t.afrrMax = src.afrrMax;
+        t.fcrHeadroom = src.fcrHeadroom; t.bidPrice = src.bidPrice; t.bidQty = src.bidQty;
         t.mode = src.mode; t.turbineTimeConstant = src.turbineTimeConstant; t.rampDownTC = src.rampDownTC;
         t.baselineContract = src.baselineContract;
       } else if (src.type === 'storage') {
@@ -2198,24 +2257,31 @@ function openSettings(nodeId) {
     panel.innerHTML = `
       <div class="settings-header"><span class="settings-title">Generator ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
-        <div class="settings-row"><label class="settings-label">Baseline Contract</label>
+        <div class="settings-row"><label class="settings-label">Dispatched MW</label>
           <div class="settings-slider-group">
             <input type="range" class="baseline-slider" min="0" max="${node.rating || 100}" value="${node.baselineContract || 0}">
             <span class="baseline-value">${Math.round(node.baselineContract || 0)} MW</span>
+          </div>
+        </div>
+        <div class="settings-row"><label class="settings-label">Output</label>
+          <div class="settings-slider-group" style="justify-content:flex-end;"><span class="gen-output" style="font-size:14px;font-weight:600;">${Math.round(node.mw || 0)} MW</span></div>
+        </div>
+        <div class="settings-row market-row" style="${node.mode === 'fixed' ? 'display:none;' : ''}"><label class="settings-label">Bid Price</label>
+          <div class="settings-slider-group">
+            <input type="range" class="bid-price-slider" min="0" max="500" step="0.5" value="${node.bidPrice || 50}">
+            <span class="bid-price-value">$${(node.bidPrice || 50).toFixed(1)}/MWh</span>
+          </div>
+        </div>
+        <div class="settings-row market-row" style="${node.mode === 'fixed' ? 'display:none;' : ''}"><label class="settings-label">Bid Qty</label>
+          <div class="settings-slider-group">
+            <input type="range" class="bid-qty-slider" min="0" max="${node.rating || 100}" value="${node.bidQty || node.rating || 100}">
+            <span class="bid-qty-value">${Math.round(node.bidQty || node.rating || 100)} MWh</span>
           </div>
         </div>
         <div class="settings-row"><label class="settings-label">FCR Headroom</label>
           <div class="settings-slider-group">
             <input type="range" class="fcr-headroom-slider" min="0" max="${node.rating || 100}" value="${node.fcrHeadroom || 10}">
             <span class="fcr-headroom-value">${Math.round(node.fcrHeadroom || 10)} MW</span>
-          </div>
-        </div>
-        <div class="settings-row"><label class="settings-label">aFRR Range</label>
-          <div class="settings-slider-group" style="gap:4px;">
-            <span style="font-size:12px;color:#888;">Min</span>
-            <input type="number" class="afrr-min-input" min="0" max="${node.rating || 100}" value="${node.afrrMin || 0}" style="width:60px;padding:3px 6px;border:1px solid #d6d2c8;border-radius:4px;font-size:12px;">
-            <span style="font-size:12px;color:#888;">Max</span>
-            <input type="number" class="afrr-max-input" min="0" max="${node.rating || 100}" value="${node.afrrMax || node.rating || 100}" style="width:60px;padding:3px 6px;border:1px solid #d6d2c8;border-radius:4px;font-size:12px;">
           </div>
         </div>
         <div class="settings-row"><label class="settings-label">Rating</label>
@@ -2253,6 +2319,7 @@ function openSettings(nodeId) {
             <select class="gen-mode-select">
               <option value="balancing" ${node.mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option>
               <option value="fcr-only" ${node.mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option>
+              <option value="merchant" ${node.mode === 'merchant' ? 'selected' : ''}>Merchant (Price Only)</option>
               <option value="fixed" ${node.mode === 'fixed' ? 'selected' : ''}>Fixed</option>
             </select>
           </div>
@@ -2262,7 +2329,7 @@ function openSettings(nodeId) {
 
     entry.outputEl = panel.querySelector('.gen-output');
 
-    // Baseline Contract slider
+    // Baseline Contract slider (updated by market, but user can tweak)
     const baselineSlider = panel.querySelector('.baseline-slider');
     const baselineVal = panel.querySelector('.baseline-value');
     entry.baselineSlider = baselineSlider;
@@ -2274,6 +2341,43 @@ function openSettings(nodeId) {
     });
     baselineSlider.addEventListener('change', () => persist());
 
+    // Rating slider
+    const ratingSlider = panel.querySelector('.rating-slider');
+    const ratingVal = panel.querySelector('.rating-value');
+    ratingSlider.addEventListener('input', () => {
+      const v = parseFloat(ratingSlider.value);
+      ratingVal.textContent = v + ' MVA';
+      node.rating = v;
+      if (fcrSlider) fcrSlider.max = v;
+      if (bidQtySlider) bidQtySlider.max = v;
+      if (baselineSlider) baselineSlider.max = v;
+    });
+    ratingSlider.addEventListener('change', () => persist());
+
+    // Bid Price slider
+    const bidPriceSlider = panel.querySelector('.bid-price-slider');
+    const bidPriceVal = panel.querySelector('.bid-price-value');
+    if (bidPriceSlider) {
+      bidPriceSlider.addEventListener('input', () => {
+        const v = parseFloat(bidPriceSlider.value);
+        bidPriceVal.textContent = '$' + v.toFixed(1) + '/MWh';
+        node.bidPrice = v;
+      });
+      bidPriceSlider.addEventListener('change', () => persist());
+    }
+
+    // Bid Qty slider
+    const bidQtySlider = panel.querySelector('.bid-qty-slider');
+    const bidQtyVal = panel.querySelector('.bid-qty-value');
+    if (bidQtySlider) {
+      bidQtySlider.addEventListener('input', () => {
+        const v = parseFloat(bidQtySlider.value);
+        bidQtyVal.textContent = Math.round(v) + ' MWh';
+        node.bidQty = v;
+      });
+      bidQtySlider.addEventListener('change', () => persist());
+    }
+
     // FCR Headroom slider
     const fcrSlider = panel.querySelector('.fcr-headroom-slider');
     const fcrVal = panel.querySelector('.fcr-headroom-value');
@@ -2283,26 +2387,6 @@ function openSettings(nodeId) {
       node.fcrHeadroom = v;
     });
     fcrSlider.addEventListener('change', () => persist());
-
-    // aFRR min/max number inputs
-    const afrrMinEl = panel.querySelector('.afrr-min-input');
-    const afrrMaxEl = panel.querySelector('.afrr-max-input');
-    afrrMinEl.addEventListener('change', () => { node.afrrMin = parseFloat(afrrMinEl.value) || 0; persist(); });
-    afrrMaxEl.addEventListener('change', () => { node.afrrMax = parseFloat(afrrMaxEl.value) || (node.rating || 100); persist(); });
-
-    // Rating slider
-    const ratingSlider = panel.querySelector('.rating-slider');
-    const ratingVal = panel.querySelector('.rating-value');
-    ratingSlider.addEventListener('input', () => {
-      const v = parseFloat(ratingSlider.value);
-      ratingVal.textContent = v + ' MVA';
-      node.rating = v;
-      baselineSlider.max = v;
-      fcrSlider.max = v;
-      afrrMinEl.max = v;
-      afrrMaxEl.max = v;
-    });
-    ratingSlider.addEventListener('change', () => persist());
 
     // Inertia slider
     const inertiaSlider = panel.querySelector('.inertia-slider');
@@ -2349,6 +2433,11 @@ function openSettings(nodeId) {
     if (modeSelect) {
       modeSelect.addEventListener('change', () => {
         node.mode = modeSelect.value;
+        // Toggle market rows visibility (hidden for fixed mode)
+        const marketRows = panel.querySelectorAll('.market-row');
+        for (const row of marketRows) {
+          row.style.display = modeSelect.value === 'fixed' ? 'none' : '';
+        }
         persist();
       });
     }
