@@ -100,12 +100,14 @@ function simTick() {
 
     // --- Handle stranded island types ---
     const hasGen = gens.length > 0, hasLoad = loads.length > 0, hasStor = storages.length > 0;
+    // A storage with no effective output counts as no supply
+    const hasEffectiveStor = storages.some(s => (s.mwResponse || 0) > 0);
     if (hasGen && !hasLoad && !hasStor) {
       for (const gen of gens) gen.mw = Math.max(0, (gen.mw || 0) - 50 * dt);
       for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
     }
-    if (!hasGen && !hasStor && hasLoad) {
+    if (!hasGen && !hasEffectiveStor && hasLoad) {
       for (const load of loads) load.mw = 0;
       for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
@@ -1204,12 +1206,23 @@ function solveDCPowerFlow(net) {
 
     for (const n of nodes) {
       const idx = busIdx[n.id];
+      if (n.tripped) continue;
       if (n.type === 'generator') P[idx] += (n.mw || 0);
       else if (n.type === 'load') P[idx] -= (n.mw || 0);
       else if (n.type === 'storage') P[idx] += (n.mwResponse || 0);
     }
 
-    let slack = nodes.findIndex(n => n.type === 'generator');
+    // If no active supply in this component, zero flows and skip
+    const hasActiveInjection = nodes.some(n => !n.tripped && (
+      (n.type === 'generator' && (n.mw || 0) > 0) || (n.type === 'storage' && (n.mwResponse || 0) > 0)
+    ));
+    if (!hasActiveInjection) {
+      for (const c of conns) { c.mw = 0; c.loadingPct = 0; }
+      continue;
+    }
+
+    let slack = nodes.findIndex(n => !n.tripped && n.type === 'generator' && (n.mw || 0) > 0);
+    if (slack < 0) slack = nodes.findIndex(n => !n.tripped && n.type === 'storage' && (n.mwResponse || 0) > 0);
     if (slack < 0) slack = 0;
 
     const map = [];
