@@ -66,7 +66,8 @@ function simTick() {
   for (const net of state.networks) {
     const freq = net.freq;
     const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
-    const gens = netNodes.filter(n => n.type === 'generator');
+    const allGens = netNodes.filter(n => n.type === 'generator');
+    const gens = allGens.filter(g => !g.tripped);
     const loads = netNodes.filter(n => n.type === 'load');
     const storages = netNodes.filter(n => n.type === 'storage');
 
@@ -161,10 +162,26 @@ function simTick() {
       net.freq = Math.max(0, freq - 10 * dt);
     }
 
-    // --- Step 4: DC Power Flow ---
+    // --- Step 4: Generator frequency protection ---
+    for (const gen of allGens) {
+      if (gen.tripped) continue;
+      if (net.freq > 52 || net.freq < 48) {
+        gen.freqTimer = (gen.freqTimer || 0) + dt;
+        if (gen.freqTimer >= 1) {
+          gen.tripped = true;
+          gen.mw = 0;
+          const cause = net.freq > 52 ? 'overspeed' : 'underfrequency';
+          sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'gen-trip', nodeId: gen.id, freq: net.freq, cause });
+        }
+      } else {
+        gen.freqTimer = 0;
+      }
+    }
+
+    // --- Step 5: DC Power Flow ---
     try { solveDCPowerFlow(net); } catch (e) { /* solver may fail for degenerate cases */ }
 
-    // --- Step 5: Line tripping ---
+    // --- Step 6: Line tripping ---
     const tripCurve = [
       { limit: 200, time: 0.5 },
       { limit: 150, time: 2 },
@@ -196,7 +213,25 @@ function simTick() {
       }
     }
 
-    // --- Step 6: AGC ---
+    // --- Step 7: Under-Frequency Load Shedding (UFLS) ---
+    if (hasLoad) {
+      for (const load of loads) {
+        if (load.baseMw === undefined) load.baseMw = load.mw || 0;
+        const f = net.freq;
+        let targetShed = 0;
+        if (f < 48.0) targetShed = 0.50;
+        else if (f < 48.5) targetShed = 0.25;
+        else if (f < 49.0) targetShed = 0.10;
+        if (f < 49.5) {
+          load.shedPct = Math.max(load.shedPct || 0, targetShed);
+        } else {
+          load.shedPct = 0;
+        }
+        load.mw = load.baseMw * (1 - (load.shedPct || 0));
+      }
+    }
+
+    // --- Step 8: AGC ---
     const balancingGens = gens.filter(g => g.mode === 'balancing');
     const freqErr = f0 - net.freq;
     if (balancingGens.length > 0) {
@@ -379,12 +414,19 @@ function restartSim() {
   for (const gen of state.nodes.filter(n => n.type === 'generator')) {
     gen.agcOffset = 0;
     gen.mw = gen.baselineContract || 0;
+    gen.tripped = false;
+    gen.freqTimer = 0;
   }
   for (const st of state.nodes.filter(n => n.type === 'storage')) {
     st.mwResponse = 0;
   }
   // Reset tripped lines
   for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
+  // Reset load shedding
+  for (const load of state.nodes.filter(n => n.type === 'load')) {
+    load.shedPct = 0;
+    if (load.baseMw) load.mw = load.baseMw;
+  }
   state.frequency = 50;
   state.networks = findNetworks();
   for (const net of state.networks) { net.freq = 50; net.freqPrev = 50; }
@@ -401,12 +443,18 @@ function balanceGrid() {
   const nets = findNetworks();
   if (!nets.length) return;
 
-  // Reset all gen baselines and tripped lines
+  // Reset all gen baselines, trips, and load shedding
   for (const gen of state.nodes.filter(n => n.type === 'generator')) {
     gen.baselineContract = 0;
     gen.agcOffset = 0;
+    gen.tripped = false;
+    gen.freqTimer = 0;
   }
   for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
+  for (const load of state.nodes.filter(n => n.type === 'load')) {
+    load.shedPct = 0;
+    if (load.baseMw) load.mw = load.baseMw;
+  }
 
   for (const net of nets) {
     const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
@@ -635,6 +683,14 @@ function drawNodes() {
     ctx.stroke();
     ctx.setLineDash([]);
 
+    // Tripped generator: red X overlay
+    if (node.type === 'generator' && node.tripped) {
+      const s = r * 0.6;
+      ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(p.x - s, p.y - s); ctx.lineTo(p.x + s, p.y + s); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(p.x + s, p.y - s); ctx.lineTo(p.x - s, p.y + s); ctx.stroke();
+    }
+
     const ls = Math.max(10, 11 * v.scale);
     ctx.fillStyle = '#6a665e';
     ctx.font = `${ls}px -apple-system, BlinkMacSystemFont, sans-serif`;
@@ -660,6 +716,14 @@ function drawNodes() {
       } else {
         ctx.fillText(Math.round(node.mw) + ' MW', p.x, p.y + r + 4 + ls + 2);
       }
+    }
+    // Load shedding badge
+    if (node.type === 'load' && (node.shedPct || 0) > 0) {
+      const ms = Math.max(8, 9 * v.scale);
+      ctx.fillStyle = '#e67e22';
+      ctx.font = `bold ${ms}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillText('SHD ' + Math.round((node.shedPct || 0) * 100) + '%', p.x, p.y - r - 2);
     }
   }
 }
@@ -1147,9 +1211,9 @@ function shortId(type) {
 function addNode(type, wx, wy) {
   let node;
   if (type === 'load') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10, baseMw: 10, shedPct: 0 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, agcOffset: 0 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, agcOffset: 0, tripped: false, freqTimer: 0 };
   } else if (type === 'storage') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 50, dischargeRate: 50, maxCapacity: 100, mode: 'balancing', fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0 };
   } else {
@@ -1258,11 +1322,17 @@ async function load() {
         if (n.inertia === undefined) n.inertia = 5;
         if (n.droop === undefined) n.droop = 0.04;
         if (n.turbineTimeConstant === undefined) n.turbineTimeConstant = 1;
+        if (n.tripped === undefined) n.tripped = false;
+        if (n.freqTimer === undefined) n.freqTimer = 0;
         // Migrate legacy merchantLock → mode
         if (n.merchantLock !== undefined) { n.mode = n.merchantLock ? 'fixed' : 'balancing'; delete n.merchantLock; }
         if (n.mode === undefined) n.mode = 'balancing';
         // Assign shortId if missing (legacy grid or freshly added)
         if (!n.shortId) n.shortId = shortId(n.type);
+      }
+      if (n.type === 'load') {
+        if (n.baseMw === undefined) n.baseMw = n.mw || 10;
+        if (n.shedPct === undefined) n.shedPct = 0;
       }
       if (n.type === 'storage') {
         if (n.chargeRate === undefined) n.chargeRate = 50;
@@ -1621,6 +1691,8 @@ document.addEventListener('keydown', (e) => {
         t.fcrHeadroom = src.fcrHeadroom; t.droop = src.droop; t.fixedTarget = src.fixedTarget;
       } else if (src.type === 'load') {
         t.mw = src.mw;
+        t.baseMw = src.mw || 10;
+        t.shedPct = 0;
       }
     }
     if (targets.length > 0) persist();
@@ -1638,7 +1710,10 @@ document.addEventListener('keydown', (e) => {
       const newId = uid();
       idMap[oldId] = newId;
       const offset = 30;
-      pasted.push({ ...n, id: newId, x: n.x + offset, y: n.y + offset, shortId: shortId(n.type) });
+      const fresh = { ...n, id: newId, x: n.x + offset, y: n.y + offset, shortId: shortId(n.type) };
+      if (fresh.type === 'generator') { fresh.tripped = false; fresh.freqTimer = 0; }
+      if (fresh.type === 'load') { fresh.shedPct = 0; fresh.baseMw = fresh.mw || 10; }
+      pasted.push(fresh);
     }
     state.nodes.push(...pasted);
     for (const c of state.clipboard.connections) {
