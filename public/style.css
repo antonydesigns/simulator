@@ -662,7 +662,7 @@ html, body {
 .balance-overlay {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(0, 0, 0, 0.5);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -670,22 +670,22 @@ html, body {
 }
 
 .balance-modal {
-  background: #1a1a2e;
-  border: 1px solid #444;
+  background: #fff;
+  border: 1px solid #ddd;
   border-radius: 10px;
-  width: 640px;
+  width: 680px;
   max-height: 85vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
 }
 
 .balance-header {
   font-size: 18px;
   font-weight: 600;
   padding: 14px 18px;
-  border-bottom: 1px solid #333;
-  color: #eee;
+  border-bottom: 1px solid #e5e5e5;
+  color: #222;
 }
 
 .balance-body {
@@ -696,7 +696,7 @@ html, body {
 
 .balance-footer {
   padding: 12px 18px;
-  border-top: 1px solid #333;
+  border-top: 1px solid #e5e5e5;
   display: flex;
   gap: 10px;
   justify-content: flex-end;
@@ -704,8 +704,8 @@ html, body {
 
 /* Island sections */
 .balance-island {
-  background: #222244;
-  border: 1px solid #3a3a5a;
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
   border-radius: 8px;
   padding: 12px 14px;
   margin-bottom: 12px;
@@ -717,18 +717,18 @@ html, body {
   align-items: center;
   margin-bottom: 10px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #3a3a5a;
+  border-bottom: 1px solid #d0d7de;
   font-size: 14px;
-  color: #aac;
+  color: #444;
 }
 
 .balance-island-header .balance-island-name {
   font-weight: 600;
-  color: #dde;
+  color: #222;
 }
 
 .balance-island-header .balance-island-stats {
-  color: #8af;
+  color: #556;
   font-size: 13px;
   font-family: monospace;
 }
@@ -744,22 +744,22 @@ html, body {
 }
 
 .balance-node-row:hover {
-  background: #2a2a4a;
+  background: #eef1f5;
 }
 
 .balance-node-row.balance-fixed-row {
-  opacity: 0.7;
+  opacity: 0.6;
 }
 
 .balance-node-row.balance-empty-row {
-  opacity: 0.5;
+  opacity: 0.45;
 }
 
 .balance-node-label {
-  width: 130px;
+  width: 140px;
   flex-shrink: 0;
   font-size: 13px;
-  color: #ccc;
+  color: #333;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -784,7 +784,7 @@ html, body {
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: #444;
+  background: #ccc;
   border-radius: 2px;
   outline: none;
   cursor: pointer;
@@ -795,7 +795,7 @@ html, body {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #6af;
+  background: #4a90d9;
   cursor: pointer;
 }
 
@@ -804,19 +804,19 @@ html, body {
   text-align: right;
   font-size: 12px;
   font-family: monospace;
-  color: #8cf;
+  color: #4a90d9;
   flex-shrink: 0;
 }
 
 /* Lock button */
 .balance-lock-btn {
   background: none;
-  border: 1px solid #555;
+  border: 1px solid #ccc;
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
   padding: 2px 6px;
-  color: #aaa;
+  color: #888;
   flex-shrink: 0;
   width: 30px;
   text-align: center;
@@ -824,8 +824,8 @@ html, body {
 }
 
 .balance-lock-btn:hover {
-  border-color: #888;
-  background: #333;
+  border-color: #999;
+  background: #f0f0f0;
 }
 
 .balance-lock-btn.balance-locked {
@@ -841,19 +841,19 @@ html, body {
   align-items: center;
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid #3a3a5a;
+  border-top: 1px solid #d0d7de;
 }
 
 .balance-remaining {
   font-size: 13px;
-  color: #aac;
+  color: #444;
   font-family: monospace;
 }
 
 .balance-redistribute-btn {
-  background: #335;
-  border: 1px solid #556;
-  color: #aaf;
+  background: #f0f4f8;
+  border: 1px solid #bbb;
+  color: #333;
   padding: 4px 14px;
   border-radius: 4px;
   cursor: pointer;
@@ -862,7 +862,7 @@ html, body {
 }
 
 .balance-redistribute-btn:hover {
-  background: #447;
+  background: #e0e6ed;
 }
 
 /* Footer buttons */
@@ -883,9 +883,9 @@ html, body {
 }
 
 .balance-cancel-btn {
-  background: #444;
-  border: none;
-  color: #ccc;
+  background: #e5e5e5;
+  border: 1px solid #ccc;
+  color: #444;
   padding: 8px 24px;
   border-radius: 5px;
   cursor: pointer;
@@ -894,5 +894,5 @@ html, body {
 }
 
 .balance-cancel-btn:hover {
-  background: #666;
+  background: #d5d5d5;
 }
