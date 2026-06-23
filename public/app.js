@@ -473,40 +473,35 @@ function balanceGrid() {
     const totalDemand = loads.reduce((sum, n) => sum + (n.mw || 0), 0);
     const fixedGens = gens.filter(g => g.mode === 'fixed');
     const flexGens = gens.filter(g => g.mode !== 'fixed');
+    const notFixedStor = storages.filter(s => s.mode !== 'idle');
 
     const fixedSupply = fixedGens.reduce((sum, g) => sum + Math.min(g.dispatchTarget || 0, g.rating || Infinity), 0);
     let remaining = totalDemand - fixedSupply;
 
-    // Distribute to flexible gens
+    // Distribute proportionally across flexible gens AND storage
     const flexGenRating = flexGens.reduce((sum, g) => sum + (g.rating || 100), 0);
-    if (flexGenRating > 0 && remaining > 0) {
+    const flexStorRate = notFixedStor.reduce((sum, s) => sum + (s.dischargeRate || 50), 0);
+    const totalFlex = flexGenRating + flexStorRate;
+
+    if (totalFlex > 0 && remaining > 0) {
       for (const gen of flexGens) {
-        const share = (gen.rating || 100) / flexGenRating;
+        const share = (gen.rating || 100) / totalFlex;
         gen.baselineContract = Math.min(Math.round(remaining * share * 10) / 10, gen.rating || Infinity);
         gen.mw = gen.baselineContract;
       }
-    }
-
-    // Cover remaining deficit or surplus with storage
-    remaining = totalDemand - fixedSupply - flexGens.reduce((s, g) => s + (g.baselineContract || 0), 0);
-    const notFixedStor = storages.filter(s => s.mode !== 'idle');
-    if (notFixedStor.length > 0) {
-      if (remaining > 0) {
-        // Deficit: discharge storage to cover gap
-        const totalRate = notFixedStor.reduce((s, st) => s + (st.dischargeRate || 50), 0);
-        for (const st of notFixedStor) {
-          const dr = st.dischargeRate || 50;
-          st.baselineContract = Math.min(Math.round(remaining * (dr / totalRate) * 10) / 10, dr);
-          if (st.mw !== undefined && st.mw < st.baselineContract * 0.05) st.baselineContract = 0;
-        }
-      } else if (remaining < 0) {
-        // Surplus: charge storage to absorb excess
-        const surplus = -remaining;
-        const totalRate = notFixedStor.reduce((s, st) => s + (st.chargeRate || 50), 0);
-        for (const st of notFixedStor) {
-          const cr = st.chargeRate || 50;
-          st.baselineContract = -Math.min(Math.round(surplus * (cr / totalRate) * 10) / 10, cr);
-        }
+      for (const st of notFixedStor) {
+        const share = (st.dischargeRate || 50) / totalFlex;
+        st.baselineContract = Math.min(Math.round(remaining * share * 10) / 10, st.dischargeRate || 50);
+        if (st.mw !== undefined && st.mw < st.baselineContract * 0.05) st.baselineContract = 0;
+      }
+    } else if (totalFlex > 0 && remaining < 0) {
+      // Surplus: charge storage to absorb excess (gens can't absorb, only curtail)
+      for (const gen of flexGens) gen.baselineContract = 0;
+      const surplus = -remaining;
+      const totalRate = notFixedStor.reduce((s, st) => s + (st.chargeRate || 50), 0);
+      for (const st of notFixedStor) {
+        const cr = st.chargeRate || 50;
+        st.baselineContract = -Math.min(Math.round(surplus * (cr / totalRate) * 10) / 10, cr);
       }
     }
   }
