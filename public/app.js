@@ -2271,7 +2271,7 @@ function updateControls() {
 document.getElementById('play-btn').addEventListener('click', () => { startSim(); updateControls(); });
 document.getElementById('pause-btn').addEventListener('click', () => { stopSim(); updateControls(); });
 document.getElementById('restart-btn').addEventListener('click', restartSim);
-document.getElementById('balance-btn').addEventListener('click', balanceGrid);
+  document.getElementById('balance-btn').addEventListener('click', () => { if (sim.running) return; openBalanceModal(); });
 document.getElementById('save-data-btn').addEventListener('click', saveSnapshot);
 
 // ─── Stats Panel ────────────────────────────────────────────────────────
@@ -2572,7 +2572,450 @@ document.getElementById('freq-chart-panel').addEventListener('mousedown', (e) =>
   }
 });
 
-// ─── Init ──────────────────────────────────────────────────────────────
+// ─── Balance Setup Modal ────────────────────────────────────────────────
+
+function openBalanceModal() {
+  if (sim.running) return;
+  const nets = findNetworks();
+  if (!nets.length) return;
+
+  // Save originals for cancel
+  const origBaselines = {};
+  const origMw = {};
+  const origShed = {};
+  for (const n of state.nodes) {
+    if (n.type === 'generator') {
+      origBaselines[n.id] = n.baselineContract || 0;
+      origMw[n.id] = n.mw;
+      origShed[n.id] = n.shedPct || 0;
+    } else if (n.type === 'storage') {
+      origBaselines[n.id] = n.baselineContract || 0;
+    } else if (n.type === 'load') {
+      origMw[n.id] = n.mw;
+      origShed[n.id] = n.shedPct || 0;
+    }
+  }
+  const origConnTripped = {};
+  for (const c of state.connections) origConnTripped[c.id] = c.tripped;
+  const origNetsFreq = {};
+  for (const net of nets) origNetsFreq[net.id] = net.freq || 50;
+
+  // Build modal
+  const overlay = document.createElement('div');
+  overlay.className = 'balance-overlay';
+  overlay.innerHTML = `<div class="balance-modal">
+    <div class="balance-header">⚖️ Balance Setup</div>
+    <div class="balance-body" id="balance-body"></div>
+    <div class="balance-footer">
+      <button class="balance-apply-btn">✓ Apply</button>
+      <button class="balance-cancel-btn">✕ Cancel</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+
+  const bodyEl = overlay.querySelector('#balance-body');
+  const applyBtn = overlay.querySelector('.balance-apply-btn');
+  const cancelBtn = overlay.querySelector('.balance-cancel-btn');
+
+  // Per-island state
+  const islandStates = [];
+
+  for (const net of nets) {
+    const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+    const loads = netNodes.filter(n => n.type === 'load');
+    const gens = netNodes.filter(n => n.type === 'generator');
+    const storages = netNodes.filter(n => n.type === 'storage');
+
+    const islandState = {
+      netId: net.id,
+      loadEntries: [],
+      flexGenEntries: [],
+      flexStorEntries: [],
+      fixedEntries: [],
+      remainingEl: null,
+    };
+
+    // Clamp helper
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+    // Build section
+    const section = document.createElement('div');
+    section.className = 'balance-island';
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'balance-island-header';
+    header.innerHTML = `<span class="balance-island-name">Island ${net.id.slice(-4)}</span>`;
+    const headerStats = document.createElement('span');
+    headerStats.className = 'balance-island-stats';
+    header.appendChild(headerStats);
+    section.appendChild(header);
+
+    function updateSummary() {
+      // Recalculate remaining
+      let totalDemand = 0, fixedSupply = 0, lockedSupply = 0;
+      for (const e of islandState.loadEntries) totalDemand += Number(e.slider.value);
+      for (const e of islandState.fixedEntries) {
+        if (e.node.type === 'generator') fixedSupply += e.value;
+        else fixedSupply += e.value;
+      }
+      for (const e of islandState.flexGenEntries) {
+        if (e.locked) lockedSupply += Number(e.slider.value);
+      }
+      for (const e of islandState.flexStorEntries) {
+        if (e.locked) lockedSupply += Number(e.slider.value);
+      }
+      const remaining = totalDemand - fixedSupply - lockedSupply;
+      const totalDispatched = lockedSupply + fixedSupply;
+      headerStats.textContent = `Load ${totalDemand} MW  •  Fixed ${fixedSupply} MW  •  Locked ${lockedSupply} MW`;
+      if (islandState.remainingEl) {
+        islandState.remainingEl.textContent = remaining >= 0
+          ? `→ Remaining: ${Math.round(remaining)} MW`
+          : `→ Surplus: ${Math.round(-remaining)} MW`;
+      }
+    }
+
+    // Load rows
+    for (const load of loads) {
+      const row = document.createElement('div');
+      row.className = 'balance-node-row';
+      const label = document.createElement('span');
+      label.className = 'balance-node-label';
+      label.textContent = `📐 ${load.shortId || load.id.slice(-5)} (${load.mw || 0} MW)`;
+      const ctrlDiv = document.createElement('div');
+      ctrlDiv.className = 'balance-node-controls';
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.className = 'balance-node-slider';
+      slider.min = 0;
+      slider.max = Math.max(load.mw || 0, 500);
+      slider.step = 1;
+      slider.value = load.mw || 0;
+      const valSpan = document.createElement('span');
+      valSpan.className = 'balance-node-value';
+      valSpan.textContent = Math.round(slider.value) + ' MW';
+      slider.addEventListener('input', () => {
+        valSpan.textContent = Math.round(slider.value) + ' MW';
+        updateSummary();
+      });
+      ctrlDiv.appendChild(slider);
+      ctrlDiv.appendChild(valSpan);
+      row.appendChild(label);
+      row.appendChild(ctrlDiv);
+      section.appendChild(row);
+      islandState.loadEntries.push({ node: load, slider, valSpan });
+    }
+
+    // Fixed gens (read-only)
+    for (const gen of gens.filter(g => g.mode === 'fixed')) {
+      const val = Math.min(gen.dispatchTarget || 0, gen.rating || Infinity);
+      const row = document.createElement('div');
+      row.className = 'balance-node-row balance-fixed-row';
+      row.innerHTML = `<span class="balance-node-label">🔒 ${gen.shortId || gen.id.slice(-5)} <span class="balance-rating">(${gen.rating || 100} MVA)</span></span>
+        <div class="balance-node-controls"><span style="color:#888;font-size:12px">fixed @ ${Math.round(val)} MW</span></div>`;
+      section.appendChild(row);
+      islandState.fixedEntries.push({ node: gen, value: val });
+    }
+
+    // Fixed storage (read-only)
+    for (const st of storages.filter(s => s.mode === 'fixed')) {
+      const val = (st.baselineContract || 0) + (st.fixedTarget || 0);
+      const row = document.createElement('div');
+      row.className = 'balance-node-row balance-fixed-row';
+      row.innerHTML = `<span class="balance-node-label">🔒 ${st.shortId || st.id.slice(-5)} <span class="balance-rating">(${st.dischargeRate || 50} MW)</span></span>
+        <div class="balance-node-controls"><span style="color:#888;font-size:12px">fixed @ ${val >= 0 ? '+' : ''}${Math.round(val)} MW</span></div>`;
+      section.appendChild(row);
+      islandState.fixedEntries.push({ node: st, value: val });
+    }
+
+    // Flex gens
+    const flexGens = gens.filter(g => g.mode !== 'fixed');
+    for (const gen of flexGens) {
+      const row = document.createElement('div');
+      row.className = 'balance-node-row';
+      const label = document.createElement('span');
+      label.className = 'balance-node-label';
+      label.textContent = `${gen.shortId || gen.id.slice(-5)} <span class="balance-rating">(${gen.rating || 100} MVA)</span>`;
+      label.innerHTML = `${gen.shortId || gen.id.slice(-5)} <span class="balance-rating">(${gen.rating || 100} MVA)</span>`;
+      const ctrlDiv = document.createElement('div');
+      ctrlDiv.className = 'balance-node-controls';
+      const lockBtn = document.createElement('button');
+      lockBtn.className = 'balance-lock-btn';
+      lockBtn.textContent = '🔓';
+      let locked = false;
+      lockBtn.addEventListener('click', () => {
+        locked = !locked;
+        lockBtn.textContent = locked ? '🔒' : '🔓';
+        lockBtn.classList.toggle('balance-locked', locked);
+        updateSummary();
+      });
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.className = 'balance-node-slider';
+      const maxVal = gen.rating || 100;
+      slider.min = 0;
+      slider.max = maxVal;
+      slider.step = 1;
+      slider.value = clamp(origBaselines[gen.id] || 0, 0, maxVal);
+      const valSpan = document.createElement('span');
+      valSpan.className = 'balance-node-value';
+      valSpan.textContent = (Number(slider.value) >= 0 ? '+' : '') + Math.round(slider.value) + ' MW';
+      slider.addEventListener('input', () => {
+        valSpan.textContent = (Number(slider.value) >= 0 ? '+' : '') + Math.round(slider.value) + ' MW';
+      });
+      ctrlDiv.appendChild(lockBtn);
+      ctrlDiv.appendChild(slider);
+      ctrlDiv.appendChild(valSpan);
+      row.appendChild(label);
+      row.appendChild(ctrlDiv);
+      section.appendChild(row);
+      islandState.flexGenEntries.push({ node: gen, slider, valSpan, lockBtn, locked: false, maxVal });
+    }
+
+    // Flex storage
+    const flexStor = storages.filter(s => s.mode !== 'fixed');
+    for (const st of flexStor) {
+      const soc = st.mw || 0;
+      const maxDischarge = st.dischargeRate || 50;
+      const maxCharge = st.chargeRate || 50;
+      const row = document.createElement('div');
+      row.className = 'balance-node-row' + (soc === 0 ? ' balance-empty-row' : '');
+      const label = document.createElement('span');
+      label.className = 'balance-node-label';
+      label.innerHTML = `${st.shortId || st.id.slice(-5)} <span class="balance-rating">(${maxDischarge} MW, SoC ${soc.toFixed(0)} MWh)</span>`;
+      const ctrlDiv = document.createElement('div');
+      ctrlDiv.className = 'balance-node-controls';
+      const lockBtn = document.createElement('button');
+      lockBtn.className = 'balance-lock-btn' + (soc === 0 ? ' balance-locked' : '');
+      lockBtn.textContent = soc === 0 ? '🔒' : '🔓';
+      let locked = soc === 0;
+      if (soc > 0) {
+        lockBtn.addEventListener('click', () => {
+          locked = !locked;
+          lockBtn.textContent = locked ? '🔒' : '🔓';
+          lockBtn.classList.toggle('balance-locked', locked);
+          updateSummary();
+        });
+      }
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.className = 'balance-node-slider';
+      slider.min = -maxCharge;
+      slider.max = maxDischarge;
+      slider.step = 1;
+      const initVal = soc === 0 ? 0 : clamp(origBaselines[st.id] || 0, -maxCharge, maxDischarge);
+      slider.value = initVal;
+      const valSpan = document.createElement('span');
+      valSpan.className = 'balance-node-value';
+      valSpan.textContent = (Number(slider.value) >= 0 ? '+' : '') + Math.round(slider.value) + ' MW';
+      slider.addEventListener('input', () => {
+        valSpan.textContent = (Number(slider.value) >= 0 ? '+' : '') + Math.round(slider.value) + ' MW';
+      });
+      ctrlDiv.appendChild(lockBtn);
+      ctrlDiv.appendChild(slider);
+      ctrlDiv.appendChild(valSpan);
+      row.appendChild(label);
+      row.appendChild(ctrlDiv);
+      section.appendChild(row);
+      islandState.flexStorEntries.push({ node: st, slider, valSpan, lockBtn, locked, maxDischarge, maxCharge, soc });
+    }
+
+    // Island footer: remaining + redistribute
+    const footer = document.createElement('div');
+    footer.className = 'balance-island-footer';
+    const remainingEl = document.createElement('span');
+    remainingEl.className = 'balance-remaining';
+    islandState.remainingEl = remainingEl;
+    const redistributeBtn = document.createElement('button');
+    redistributeBtn.className = 'balance-redistribute-btn';
+    redistributeBtn.textContent = '🔄 Redistribute';
+    redistributeBtn.addEventListener('click', () => {
+      // Calculate remaining
+      let totalDemand = 0, fixedSupply = 0, lockedSupply = 0;
+      for (const e of islandState.loadEntries) totalDemand += Number(e.slider.value);
+      for (const e of islandState.fixedEntries) fixedSupply += e.value;
+      for (const e of islandState.flexGenEntries) {
+        if (e.locked) lockedSupply += Number(e.slider.value);
+      }
+      for (const e of islandState.flexStorEntries) {
+        if (e.locked) lockedSupply += Number(e.slider.value);
+      }
+      let remaining = totalDemand - fixedSupply - lockedSupply;
+
+      if (remaining > 0) {
+        // Distribute across unlocked flex gens + storage
+        const unlockedGens = islandState.flexGenEntries.filter(e => !e.locked);
+        const unlockedStor = islandState.flexStorEntries.filter(e => !e.locked && e.soc > 0);
+        const totalGenRating = unlockedGens.reduce((s, e) => s + (e.node.rating || e.maxVal), 0);
+        const totalStorRate = unlockedStor.reduce((s, e) => s + e.maxDischarge, 0);
+        const totalFlex = totalGenRating + totalStorRate;
+
+        if (totalFlex > 0) {
+          for (const e of unlockedGens) {
+            const share = (e.node.rating || e.maxVal) / totalFlex;
+            const val = clamp(Math.round(remaining * share), 0, e.maxVal);
+            e.slider.value = val;
+            e.valSpan.textContent = '+' + val + ' MW';
+          }
+          for (const e of unlockedStor) {
+            const share = e.maxDischarge / totalFlex;
+            const val = clamp(Math.round(remaining * share), 0, e.maxDischarge);
+            e.slider.value = val;
+            e.valSpan.textContent = '+' + val + ' MW';
+          }
+          // Redistribute shortfall from zeroed storage to gens
+          const newLocked = islandState.flexGenEntries.filter(e => e.locked).reduce((s, e) => s + Number(e.slider.value), 0);
+          const newUnlockedGen = unlockedGens.reduce((s, e) => s + Number(e.slider.value), 0);
+          const newUnlockedStor = unlockedStor.reduce((s, e) => s + Number(e.slider.value), 0);
+          const totalAfter = fixedSupply + newLocked + newUnlockedGen + newUnlockedStor;
+          let shortfall = totalDemand - totalAfter;
+          if (shortfall > 1 && unlockedGens.length > 0) {
+            const remainingRating = unlockedGens.reduce((s, e) => s + (e.node.rating || e.maxVal), 0);
+            if (remainingRating > 0) {
+              for (const e of unlockedGens) {
+                const share = (e.node.rating || e.maxVal) / remainingRating;
+                const add = clamp(Math.round(shortfall * share), 0, e.maxVal - Number(e.slider.value));
+                const newVal = Number(e.slider.value) + add;
+                e.slider.value = newVal;
+                e.valSpan.textContent = '+' + newVal + ' MW';
+              }
+            }
+          }
+        }
+      } else if (remaining < 0) {
+        // Surplus: zero unlocked gens, distribute charge across unlocked storage
+        for (const e of islandState.flexGenEntries) {
+          if (!e.locked) {
+            e.slider.value = 0;
+            e.valSpan.textContent = '+0 MW';
+          }
+        }
+        const unlockedStor = islandState.flexStorEntries.filter(e => !e.locked);
+        const surplus = -remaining;
+        const totalCharge = unlockedStor.reduce((s, e) => s + e.maxCharge, 0);
+        if (totalCharge > 0) {
+          for (const e of unlockedStor) {
+            const share = e.maxCharge / totalCharge;
+            const val = clamp(-Math.round(surplus * share), -e.maxCharge, 0);
+            e.slider.value = val;
+            e.valSpan.textContent = Math.round(val) + ' MW';
+          }
+        }
+      }
+      updateSummary();
+    });
+
+    footer.appendChild(remainingEl);
+    footer.appendChild(redistributeBtn);
+    section.appendChild(footer);
+
+    bodyEl.appendChild(section);
+    islandStates.push(islandState);
+
+    // Initial summary
+    updateSummary();
+  }
+
+  // Apply handler
+  applyBtn.addEventListener('click', () => {
+    // Reset trips, shedding, frequencies
+    for (const gen of state.nodes.filter(n => n.type === 'generator')) {
+      gen.agcOffset = 0;
+      gen.tripped = false;
+      gen.freqTimer = 0;
+    }
+    for (const st of state.nodes.filter(n => n.type === 'storage')) {
+      st.mwResponse = st.baselineContract || 0;
+      st.agcOffset = 0;
+    }
+    for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
+    for (const load of state.nodes.filter(n => n.type === 'load')) {
+      load.shedPct = 0;
+    }
+    for (const net of nets) {
+      net.freq = 50;
+      net.freqPrev = 50;
+    }
+
+    // Apply modal values
+    for (const is of islandStates) {
+      for (const e of is.loadEntries) {
+        const val = Number(e.slider.value);
+        e.node.mw = val;
+        e.node.baseMw = val;
+      }
+      for (const e of is.flexGenEntries) {
+        const val = Number(e.slider.value);
+        e.node.baselineContract = val;
+        e.node.mw = val;
+      }
+      for (const e of is.flexStorEntries) {
+        const val = Number(e.slider.value);
+        e.node.baselineContract = val;
+        e.node.mwResponse = val;
+      }
+    }
+
+    recomputeNetworks();
+    persist();
+    draw();
+    updateControls();
+    updateStatsPanel();
+
+    // Update open settings panels
+    for (const nodeId of Object.keys(openPanels)) {
+      const entry = openPanels[nodeId];
+      const st = state.nodes.find(n => n.id === nodeId && n.type === 'storage');
+      if (st && entry.bcSlider && entry.bcVal) {
+        entry.bcSlider.value = st.baselineContract || 0;
+        entry.bcVal.textContent = (st.baselineContract || 0) >= 0
+          ? '+' + Math.round(st.baselineContract || 0) + ' MW'
+          : Math.round(st.baselineContract || 0) + ' MW';
+      }
+      const gen = state.nodes.find(n => n.id === nodeId && n.type === 'generator');
+      if (gen && entry.bcSlider && entry.bcVal) {
+        entry.bcSlider.value = gen.baselineContract || 0;
+        entry.bcVal.textContent = '+' + Math.round(gen.baselineContract || 0) + ' MW';
+      }
+    }
+
+    document.body.removeChild(overlay);
+  });
+
+  // Cancel handler — restore originals
+  cancelBtn.addEventListener('click', () => {
+    for (const n of state.nodes) {
+      if (n.type === 'generator') {
+        n.baselineContract = origBaselines[n.id] || 0;
+        n.mw = origMw[n.id] || 0;
+        n.shedPct = origShed[n.id] || 0;
+      } else if (n.type === 'storage') {
+        n.baselineContract = origBaselines[n.id] || 0;
+      } else if (n.type === 'load') {
+        n.mw = origMw[n.id] || 0;
+        n.shedPct = origShed[n.id] || 0;
+        if (n.baseMw) n.baseMw = n.mw;
+      }
+    }
+    for (const c of state.connections) c.tripped = origConnTripped[c.id] || false;
+    for (const net of nets) { net.freq = origNetsFreq[net.id] || 50; net.freqPrev = origNetsFreq[net.id] || 50; }
+    recomputeNetworks();
+    persist();
+    draw();
+    updateControls();
+    updateStatsPanel();
+    document.body.removeChild(overlay);
+  });
+
+  // Click outside modal closes it
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      cancelBtn.click();
+    }
+  });
+}
+
+// ─── Init ──────────────────────────────────────────────
 
 async function init() {
   await load();
