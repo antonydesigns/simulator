@@ -83,16 +83,14 @@ function simTick() {
         const rating = gen.rating || 100;
         const dev = (freq - f0) / f0;
         const govMod = -(1 / droop) * dev * rating;
-        const fcrHeadroom = gen.fcrHeadroom || 10;
-        const fcrResponse = Math.max(-fcrHeadroom, Math.min(fcrHeadroom, govMod));
-        totalTarget = (gen.baselineContract || 0) + fcrResponse + (gen.agcOffset || 0);
+        totalTarget = (gen.baselineContract || 0) + govMod + (gen.agcOffset || 0);
       }
       const afrrMin = gen.afrrMin !== undefined ? gen.afrrMin : 0;
       const afrrMax = gen.afrrMax !== undefined ? gen.afrrMax : (gen.rating || Infinity);
       const maxMw = gen.rating || Infinity;
       totalTarget = Math.max(0, afrrMin, Math.min(afrrMax, maxMw, totalTarget));
       const current = gen.mw || 0;
-      const T = gen.turbineTimeConstant || 1;
+      const T = totalTarget < current ? (gen.rampDownTC || 0.3) : (gen.turbineTimeConstant || 1);
       gen.mw = current + (totalTarget - current) * dt / T;
     }
 
@@ -1213,7 +1211,7 @@ function addNode(type, wx, wy) {
   if (type === 'load') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10, baseMw: 10, shedPct: 0 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, agcOffset: 0, tripped: false, freqTimer: 0 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, afrrMin: 0, afrrMax: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, tripped: false, freqTimer: 0 };
   } else if (type === 'storage') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 50, dischargeRate: 50, maxCapacity: 100, mode: 'balancing', fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0 };
   } else {
@@ -1322,6 +1320,7 @@ async function load() {
         if (n.inertia === undefined) n.inertia = 5;
         if (n.droop === undefined) n.droop = 0.04;
         if (n.turbineTimeConstant === undefined) n.turbineTimeConstant = 1;
+        if (n.rampDownTC === undefined) n.rampDownTC = 0.3;
         if (n.tripped === undefined) n.tripped = false;
         if (n.freqTimer === undefined) n.freqTimer = 0;
         // Migrate legacy merchantLock → mode
@@ -1683,7 +1682,7 @@ document.addEventListener('keydown', (e) => {
       if (src.type === 'generator') {
         t.rating = src.rating; t.inertia = src.inertia; t.droop = src.droop;
         t.fcrHeadroom = src.fcrHeadroom; t.afrrMin = src.afrrMin; t.afrrMax = src.afrrMax;
-        t.mode = src.mode; t.turbineTimeConstant = src.turbineTimeConstant;
+        t.mode = src.mode; t.turbineTimeConstant = src.turbineTimeConstant; t.rampDownTC = src.rampDownTC;
         t.baselineContract = src.baselineContract;
       } else if (src.type === 'storage') {
         t.chargeRate = src.chargeRate; t.dischargeRate = src.dischargeRate;
@@ -1806,6 +1805,12 @@ function openSettings(nodeId) {
             <span class="tc-value">${(node.turbineTimeConstant || 1).toFixed(1)}s</span>
           </div>
         </div>
+        <div class="settings-row"><label class="settings-label">Ramp-Down TC</label>
+          <div class="settings-slider-group">
+            <input type="range" class="rd-slider" min="0.05" max="2" step="0.05" value="${node.rampDownTC || 0.3}">
+            <span class="rd-value">${(node.rampDownTC || 0.3).toFixed(2)}s</span>
+          </div>
+        </div>
         <div class="settings-row sep-top"><label class="settings-label">Mode</label>
           <div class="settings-slider-group">
             <select class="gen-mode-select">
@@ -1890,6 +1895,16 @@ function openSettings(nodeId) {
       node.turbineTimeConstant = v;
     });
     tcSlider.addEventListener('change', () => persist());
+
+    // Ramp-Down TC slider
+    const rdSlider = panel.querySelector('.rd-slider');
+    const rdVal = panel.querySelector('.rd-value');
+    rdSlider.addEventListener('input', () => {
+      const v = parseFloat(rdSlider.value);
+      rdVal.textContent = v.toFixed(2) + 's';
+      node.rampDownTC = v;
+    });
+    rdSlider.addEventListener('change', () => persist());
 
     // Mode select
     const modeSelect = panel.querySelector('.gen-mode-select');
