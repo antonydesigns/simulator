@@ -970,8 +970,8 @@ function showMenu(e, nodeHit) {
   menu.dataset.connId = '';
   menuItems.innerHTML = '';
 
-  const islandHit = nodeHit ? null : hitIsland(world.x, world.y);
-  const lineHit = (!nodeHit && !islandHit) ? findNearestLine(world.x, world.y, 15 / state.view.scale) : null;
+  const lineHit = (!nodeHit) ? findNearestLine(world.x, world.y, 15 / state.view.scale) : null;
+  const islandHit = (nodeHit || lineHit) ? null : hitIsland(world.x, world.y);
 
   if (nodeHit && nodeHit.type !== 'junction') {
     addMenuItem('Open settings', 'open-settings');
