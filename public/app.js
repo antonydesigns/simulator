@@ -446,10 +446,9 @@ function drawConnections() {
       color = '#c0392b';
     }
     
-    // Highlight on hover in status mode
+    // Highlight on hover in status mode — thicker but same color
     const isHovered = state.hoverLine && state.hoverLine.conn && state.hoverLine.conn.id === c.id;
     if (isHovered && state.lineMode === 'status') {
-      color = '#333';
       lineWidth = 4;
     }
     
@@ -579,12 +578,30 @@ function drawPendingLine() {
 }
 
 function drawHoverDot() {
-  if (!state.hoverLine || state.lineMode !== 'junction') return;
-  const p = worldToScreen(state.hoverLine.x, state.hoverLine.y);
-  const r = JUNCTION_RADIUS * state.view.scale;
-  ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(160,156,148,0.4)'; ctx.fill();
-  ctx.strokeStyle = 'rgba(160,156,148,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+  if (!state.hoverLine) return;
+  if (state.lineMode === 'junction') {
+    const p = worldToScreen(state.hoverLine.x, state.hoverLine.y);
+    const r = JUNCTION_RADIUS * state.view.scale;
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(160,156,148,0.4)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(160,156,148,0.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+  } else {
+    // Status mode — show flow info tooltip
+    const conn = state.hoverLine.conn;
+    const p = worldToScreen(state.hoverLine.x, state.hoverLine.y);
+    const flow = conn.mw !== undefined ? Math.abs(conn.mw).toFixed(1) : '?';
+    const limit = conn.thermalLimit || 100;
+    const pct = conn.loadingPct !== undefined ? conn.loadingPct.toFixed(0) : '?';
+    const text = flow + ' / ' + limit + ' MW (' + pct + '%)';
+    ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+    const tw = ctx.measureText(text).width;
+    const bx = p.x - tw / 2 - 8, by = p.y - 22;
+    ctx.fillStyle = 'rgba(40,40,40,0.85)';
+    ctx.beginPath(); ctx.roundRect(bx, by, tw + 16, 20, 4); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, p.x, by + 10);
+  }
 }
 
 function drawSelectionRect() {
@@ -1283,16 +1300,6 @@ document.addEventListener('keydown', (e) => {
 
   if (e.key === 'j' || e.key === 'J') {
     state.lineMode = state.lineMode === 'junction' ? 'status' : 'junction';
-    const badge = document.getElementById('line-mode-badge');
-    if (badge) {
-      if (state.lineMode === 'status') {
-        badge.className = 'status-badge line-mode-status';
-        badge.textContent = 'ℹ️ Line Status';
-      } else {
-        badge.className = 'status-badge line-mode-junction';
-        badge.textContent = '🪢 Junction';
-      }
-    }
     draw();
   }
 
