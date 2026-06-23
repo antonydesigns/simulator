@@ -9,6 +9,7 @@ const state = {
   view: { x: 0, y: 0, scale: 1 },
   spaceDown: false,
   frequency: 50,
+  networks: [],
   clipboard: null, // { nodes: [...copied nodes...], connections: [...] }
 };
 
@@ -23,135 +24,121 @@ const sim = {
 };
 
 function simTick() {
-  const gens = state.nodes.filter(n => n.type === 'generator');
-  const loads = state.nodes.filter(n => n.type === 'load');
-  const storages = state.nodes.filter(n => n.type === 'storage');
-
-  if (gens.length === 0) return;
-  if (loads.length === 0 && storages.length === 0) return;
-
-  const dt = 1 / sim.tickHz;
+  const networks = findNetworks();
+  state.networks = networks;
   const f0 = 50;
+  const dt = 1 / sim.tickHz;
 
-  // --- Step 1: Governor droop + baseline + AGC offset ---
-  // gen.mw = baselineContract + FCR response + AGC offset
-  //   FCR response = govMod clamped to ±fcrHeadroom (symmetrical)
-  //   AGC offset = accumulated from Step 4 (reset on restart)
-  //   Total clamped to [afrrMin, afrrMax] ∩ [0, rating]
-  //   Smooth first-order turbine lag (timeConstant)
-  for (const gen of gens) {
-    let totalTarget;
+  for (const net of networks) {
+    const freq = net.freq;
+    const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+    const gens = netNodes.filter(n => n.type === 'generator');
+    const loads = netNodes.filter(n => n.type === 'load');
+    const storages = netNodes.filter(n => n.type === 'storage');
 
-    if (gen.mode === 'fixed') {
-      totalTarget = gen.baselineContract || 0;
+    if (gens.length === 0 && loads.length === 0 && storages.length === 0) continue;
+
+    // --- Step 1: Governor droop + baseline + AGC offset ---
+    for (const gen of gens) {
+      let totalTarget;
+      if (gen.mode === 'fixed') {
+        totalTarget = gen.baselineContract || 0;
+      } else {
+        const droop = gen.droop || 0.04;
+        const rating = gen.rating || 100;
+        const dev = (freq - f0) / f0;
+        const govMod = -(1 / droop) * dev * rating;
+        const fcrHeadroom = gen.fcrHeadroom || 10;
+        const fcrResponse = Math.max(-fcrHeadroom, Math.min(fcrHeadroom, govMod));
+        totalTarget = (gen.baselineContract || 0) + fcrResponse + (gen.agcOffset || 0);
+      }
+      const afrrMin = gen.afrrMin !== undefined ? gen.afrrMin : 0;
+      const afrrMax = gen.afrrMax !== undefined ? gen.afrrMax : (gen.rating || Infinity);
+      const maxMw = gen.rating || Infinity;
+      totalTarget = Math.max(0, afrrMin, Math.min(afrrMax, maxMw, totalTarget));
+      const current = gen.mw || 0;
+      const T = gen.turbineTimeConstant || 1;
+      gen.mw = current + (totalTarget - current) * dt / T;
+    }
+
+    const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
+    const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
+
+    // --- Step 2: Storage FCR ---
+    for (const st of storages) {
+      st.mwResponse = 0;
+      if (st.mode === 'balancing') {
+        const droop = st.droop || 0.04;
+        const rating = st.maxCapacity || 100;
+        const dev = (freq - f0) / f0;
+        const govMod = -(1 / droop) * dev * rating;
+        const headroom = st.fcrHeadroom || 10;
+        let fcrResponse = Math.max(-headroom, Math.min(headroom, govMod));
+        const soc = st.mw || 0;
+        const cap = st.maxCapacity || 100;
+        const maxDischargeP = soc / (dt / 3600);
+        const maxChargeP = (cap - soc) / (dt / 3600);
+        fcrResponse = Math.max(-maxChargeP, Math.min(maxDischargeP, fcrResponse));
+        fcrResponse = Math.max(-(st.chargeRate || 50), Math.min(st.dischargeRate || 50, fcrResponse));
+        st.mwResponse = fcrResponse;
+      } else if (st.mode === 'fixed') {
+        const target = st.fixedTarget || 0;
+        const soc = st.mw || 0;
+        const cap = st.maxCapacity || 100;
+        const maxDischargeP = soc / (dt / 3600);
+        const maxChargeP = (cap - soc) / (dt / 3600);
+        let out = Math.max(-(st.chargeRate || 50), Math.min(st.dischargeRate || 50, target));
+        out = Math.max(-maxChargeP, Math.min(maxDischargeP, out));
+        st.mwResponse = out;
+      }
+      const cap = st.maxCapacity || 100;
+      st.mw = Math.max(0, Math.min(cap, (st.mw || 0) - st.mwResponse * dt / 3600));
+    }
+
+    const totalStorage = storages.reduce((s, st) => s + (st.mwResponse || 0), 0);
+    const imbalance = totalGen + totalStorage - totalLoad;
+
+    // --- Step 3: Swing equation ---
+    if (gens.length > 0) {
+      let totalInertiaEnergy = 0;
+      for (const gen of gens) totalInertiaEnergy += (gen.inertia || 5) * (gen.rating || 100);
+      let dfdt = 0;
+      if (totalInertiaEnergy > 0) dfdt = (imbalance * f0) / (2 * totalInertiaEnergy);
+      net.freq = Math.max(45, Math.min(55, freq + dfdt * dt));
     } else {
-      const droop = gen.droop || 0.04;
-      const rating = gen.rating || 100;
-      const dev = (state.frequency - f0) / f0;
-      const govMod = -(1 / droop) * dev * rating;
-      const fcrHeadroom = gen.fcrHeadroom || 10;
-      const fcrResponse = Math.max(-fcrHeadroom, Math.min(fcrHeadroom, govMod));
-      totalTarget = (gen.baselineContract || 0) + fcrResponse + (gen.agcOffset || 0);
+      // No gens — frequency decays toward 0 (load can't be served)
+      net.freq = Math.max(0, freq - 10 * dt);
     }
 
-    // Clamp to aFRR range and rating
-    const afrrMin = gen.afrrMin !== undefined ? gen.afrrMin : 0;
-    const afrrMax = gen.afrrMax !== undefined ? gen.afrrMax : (gen.rating || Infinity);
-    const maxMw = gen.rating || Infinity;
-    totalTarget = Math.max(0, afrrMin, Math.min(afrrMax, maxMw, totalTarget));
-
-    // First-order turbine lag
-    const current = gen.mw || 0;
-    const T = gen.turbineTimeConstant || 1;
-    gen.mw = current + (totalTarget - current) * dt / T;
-  }
-
-  const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
-  const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
-
-  // --- Step 2: Storage frequency response (FCR via droop) ---
-  // Storage acts instantly (no turbine lag). Clamped by SoC and rate limits.
-  for (const st of storages) {
-    st.mwResponse = 0;
-
-    if (st.mode === 'balancing') {
-      const droop = st.droop || 0.04;
-      const rating = st.maxCapacity || 100;
-      const dev = (state.frequency - f0) / f0;
-      const govMod = -(1 / droop) * dev * rating;
-      const headroom = st.fcrHeadroom || 10;
-      let fcrResponse = Math.max(-headroom, Math.min(headroom, govMod));
-
-      // SoC clamp: can't discharge what you don't have, can't charge what you can't store
-      const soc = st.mw || 0;
-      const cap = st.maxCapacity || 100;
-      const maxDischargeP = soc / (dt / 3600);
-      const maxChargeP = (cap - soc) / (dt / 3600);
-      fcrResponse = Math.max(-maxChargeP, Math.min(maxDischargeP, fcrResponse));
-
-      // Rate clamp
-      fcrResponse = Math.max(-(st.chargeRate || 50), Math.min(st.dischargeRate || 50, fcrResponse));
-      st.mwResponse = fcrResponse;
-
-    } else if (st.mode === 'fixed') {
-      const target = st.fixedTarget || 0;
-      const soc = st.mw || 0;
-      const cap = st.maxCapacity || 100;
-      const maxDischargeP = soc / (dt / 3600);
-      const maxChargeP = (cap - soc) / (dt / 3600);
-      let out = Math.max(-(st.chargeRate || 50), Math.min(st.dischargeRate || 50, target));
-      out = Math.max(-maxChargeP, Math.min(maxDischargeP, out));
-      st.mwResponse = out;
-    }
-    // idle → mwResponse stays 0
-
-    // Update state of charge (MWh) — dt/3600 converts MW·s to MWh
-    const cap = st.maxCapacity || 100;
-    st.mw = Math.max(0, Math.min(cap, (st.mw || 0) - st.mwResponse * dt / 3600));
-  }
-
-  // --- Step 3: Frequency from FULL grid balance (gens + storage - loads) ---
-  const totalStorage = storages.reduce((s, st) => s + (st.mwResponse || 0), 0);
-  const imbalance = totalGen + totalStorage - totalLoad;
-
-  let totalInertiaEnergy = 0;
-  for (const gen of gens) totalInertiaEnergy += (gen.inertia || 5) * (gen.rating || 100);
-
-  let dfdt = 0;
-  if (totalInertiaEnergy > 0) dfdt = (imbalance * f0) / (2 * totalInertiaEnergy);
-  state.frequency += dfdt * dt;
-  state.frequency = Math.max(45, Math.min(55, state.frequency));
-
-  let changed = true;
-
-  // --- Step 4: AGC (aFRR / secondary control) ---
-  // Slowly adjusts agcOffset to restore 50 Hz.
-  // Distribution proportional to aFRR upward headroom.
-  // Rate-limited per gen (5 MW/s).
-  const balancingGens = gens.filter(g => g.mode === 'balancing');
-  const freqErr = f0 - state.frequency;
-  if (balancingGens.length > 0) {
-    const agcRateLimit = 5; // MW/s per gen
-    const maxDelta = agcRateLimit * dt;
-    const totalHeadroom = balancingGens.reduce((s, g) => s + Math.max(0, (g.afrrMax !== undefined ? g.afrrMax : (g.rating || 100)) - (g.baselineContract || 0) - (g.fcrHeadroom || 10)), 0);
-    if (totalHeadroom > 0) {
-      const totalAgc = 50 * freqErr * dt;
-      for (const gen of balancingGens) {
-        const upwardHeadroom = Math.max(0, (gen.afrrMax !== undefined ? gen.afrrMax : (gen.rating || 100)) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10));
-        const share = upwardHeadroom / totalHeadroom;
-        const agcDelta = totalAgc * share;
-        const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
-        if (Math.abs(clamped) > 0.0001) {
-          gen.agcOffset = (gen.agcOffset || 0) + clamped;
-          // Clamp agcOffset so total target stays within achievable bounds
-          // even with max FCR: baseline ± fcrHeadroom + agcOffset ∈ [0, rating]
-          const minAgc = (gen.fcrHeadroom || 10) - (gen.baselineContract || 0);
-          const maxAgc = (gen.rating || 100) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10);
-          gen.agcOffset = Math.max(minAgc, Math.min(maxAgc, gen.agcOffset));
+    // --- Step 4: AGC ---
+    const balancingGens = gens.filter(g => g.mode === 'balancing');
+    const freqErr = f0 - net.freq;
+    if (balancingGens.length > 0) {
+      const agcRateLimit = 5;
+      const maxDelta = agcRateLimit * dt;
+      const totalHeadroom = balancingGens.reduce((s, g) => s + Math.max(0, (g.afrrMax !== undefined ? g.afrrMax : (g.rating || 100)) - (g.baselineContract || 0) - (g.fcrHeadroom || 10)), 0);
+      if (totalHeadroom > 0) {
+        const totalAgc = 50 * freqErr * dt;
+        for (const gen of balancingGens) {
+          const upwardHeadroom = Math.max(0, (gen.afrrMax !== undefined ? gen.afrrMax : (gen.rating || 100)) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10));
+          const share = upwardHeadroom / totalHeadroom;
+          const agcDelta = totalAgc * share;
+          const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
+          if (Math.abs(clamped) > 0.0001) {
+            gen.agcOffset = (gen.agcOffset || 0) + clamped;
+            const minAgc = (gen.fcrHeadroom || 10) - (gen.baselineContract || 0);
+            const maxAgc = (gen.rating || 100) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10);
+            gen.agcOffset = Math.max(minAgc, Math.min(maxAgc, gen.agcOffset));
+          }
         }
       }
     }
   }
+
+  // Update global state.frequency for backward compat (first network's freq)
+  state.frequency = state.networks.length > 0 ? state.networks[0].freq : 50;
+
+  let changed = true;
 
   // --- Step 5: Update open settings panels ---
   for (const nodeId of Object.keys(openPanels)) {
@@ -197,14 +184,15 @@ function simTick() {
   {
     const fcrBadge = document.getElementById('fcr-badge');
     const afrrBadge = document.getElementById('afrr-badge');
-    const fcrGens = gens.filter(g => g.mode === 'balancing' || g.mode === 'fcr-only');
+    const allGens = state.nodes.filter(n => n.type === 'generator');
+    const fcrGens = allGens.filter(g => g.mode === 'balancing' || g.mode === 'fcr-only');
     const fcrActive = fcrGens.some(g => {
       const dev = (state.frequency - f0) / f0;
       const govMod = -(1 / (g.droop || 0.04)) * dev * (g.rating || 100);
       return Math.abs(govMod) > 0.5 && Math.abs(govMod) <= (g.fcrHeadroom || 10);
     });
     fcrBadge.className = 'status-badge ' + (fcrActive ? 'fcr-active' : 'fcr-inactive');
-    const balancingGens = gens.filter(g => g.mode === 'balancing');
+    const balancingGens = allGens.filter(g => g.mode === 'balancing');
     const afrrActive = Math.abs(f0 - state.frequency) > 0.001 && balancingGens.length > 0;
     afrrBadge.className = 'status-badge ' + (afrrActive ? 'afrr-active' : 'afrr-inactive');
   }
@@ -266,6 +254,8 @@ function restartSim() {
     st.mwResponse = 0;
   }
   state.frequency = 50;
+  state.networks = findNetworks();
+  for (const net of state.networks) net.freq = 50;
   draw();
   updateControls();
   updateStatsPanel();
@@ -399,8 +389,16 @@ function drawConnections() {
     const t = state.nodes.find(n => n.id === c.targetId);
     if (!s || !t) continue;
     const p = worldToScreen(s.x, s.y), q = worldToScreen(t.x, t.y);
-    ctx.beginPath(); ctx.strokeStyle = '#7a766e'; ctx.lineWidth = 2;
+    
+    // Check if both nodes are in the same network
+    const sameNet = state.networks && state.networks.some(net => net.nodeIds.has(s.id) && net.nodeIds.has(t.id));
+    
+    ctx.beginPath();
+    ctx.strokeStyle = sameNet ? '#7a766e' : '#c0392b';
+    ctx.lineWidth = sameNet ? 2 : 1.5;
+    if (!sameNet) ctx.setLineDash([4, 4]);
     ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+    ctx.setLineDash([]);
   }
 }
 
@@ -472,28 +470,41 @@ function roundRect(x, y, w, h, r) {
 }
 
 function drawFrequencyHud() {
-  const freq = state.frequency;
-  const dev = freq - 50;
-
+  const networks = state.networks && state.networks.length > 0 ? state.networks : [{ id: 'net_0', freq: state.frequency, nodeIds: new Set(state.nodes.map(n => n.id)) }];
   const pad = 14, bw = 170, bh = 48;
-  const rx = window.innerWidth - bw - pad, ry = pad;
+  const rx = window.innerWidth - bw - pad;
+  let ry = pad;
+  
+  // Count gens per network for compact label
+  for (const net of networks) {
+    const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+    const genCount = netNodes.filter(n => n.type === 'generator').length;
+    const loadCount = netNodes.filter(n => n.type === 'load').length;
+    const freq = net.freq;
+    const dev = freq - 50;
+    const label = networks.length > 1
+      ? (genCount + loadCount > 0 ? genCount + 'G ' + loadCount + 'L' : net.nodeIds.size + ' nodes')
+      : '';
 
-  ctx.fillStyle = 'rgba(240, 236, 228, 0.92)';
-  ctx.beginPath(); roundRect(rx, ry, bw, bh, 8); ctx.fill();
-  ctx.strokeStyle = '#d6d2c8'; ctx.lineWidth = 1;
-  ctx.beginPath(); roundRect(rx, ry, bw, bh, 8); ctx.stroke();
+    ctx.fillStyle = 'rgba(240, 236, 228, 0.92)';
+    ctx.beginPath(); roundRect(rx, ry, bw, bh, 8); ctx.fill();
+    ctx.strokeStyle = '#d6d2c8'; ctx.lineWidth = 1;
+    ctx.beginPath(); roundRect(rx, ry, bw, bh, 8); ctx.stroke();
 
-  // Frequency value — colour shifts when deviating
-  ctx.fillStyle = Math.abs(dev) > 0.3 ? '#c0392b' : (Math.abs(dev) > 0.1 ? '#d4891a' : '#5a7a5a');
-  ctx.font = 'bold 24px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(freq.toFixed(2) + ' Hz', rx + bw / 2, ry + bh / 2 - 4);
+    // Frequency value — colour shifts when deviating
+    ctx.fillStyle = Math.abs(dev) > 0.3 ? '#c0392b' : (Math.abs(dev) > 0.1 ? '#d4891a' : '#5a7a5a');
+    ctx.font = 'bold 24px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(freq.toFixed(2) + ' Hz', rx + bw / 2, ry + bh / 2 - 4);
 
-  ctx.fillStyle = '#8a867e';
-  ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
-  ctx.textBaseline = 'top';
-  const sign = dev > 0 ? '+' : '';
-  ctx.fillText(sign + dev.toFixed(3) + ' Hz deviation', rx + bw / 2, ry + bh / 2 + 12);
+    ctx.fillStyle = '#8a867e';
+    ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+    ctx.textBaseline = 'top';
+    const sign = dev > 0 ? '+' : '';
+    ctx.fillText(label || (sign + dev.toFixed(3) + ' Hz deviation'), rx + bw / 2, ry + bh / 2 + 12);
+
+    ry += bh + 4;
+  }
 }
 
 function drawPendingLine() {
@@ -579,6 +590,39 @@ function hitNode(wx, wy) {
     if ((wx - n.x)**2 + (wy - n.y)**2 <= r * r) return n;
   }
   return null;
+}
+
+// ─── Network Detection ────────────────────────────────────────────────
+
+function findNetworks() {
+  const visited = new Set();
+  const networks = [];
+  const adj = {};
+  for (const n of state.nodes) adj[n.id] = [];
+  for (const c of state.connections) {
+    if (!adj[c.sourceId]) adj[c.sourceId] = [];
+    if (!adj[c.targetId]) adj[c.targetId] = [];
+    adj[c.sourceId].push(c.targetId);
+    adj[c.targetId].push(c.sourceId);
+  }
+  for (const n of state.nodes) {
+    if (visited.has(n.id)) continue;
+    const nodeIds = new Set();
+    const queue = [n.id];
+    visited.add(n.id);
+    while (queue.length) {
+      const id = queue.shift();
+      nodeIds.add(id);
+      for (const neighbor of (adj[id] || [])) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          queue.push(neighbor);
+        }
+      }
+    }
+    networks.push({ id: 'net_' + networks.length, nodeIds, freq: 50 });
+  }
+  return networks;
 }
 
 // ─── ID ────────────────────────────────────────────────────────────────
@@ -1300,6 +1344,9 @@ function updateStatsPanel() {
   // --- System ---
   html += '<div class="stats-section">';
   html += '<div class="stats-section-title">📊 System</div>';
+  if (state.networks && state.networks.length > 1) {
+    html += '<div class="stats-row"><span>Islands</span><span class="value">' + state.networks.length + '</span></div>';
+  }
   html += '<div class="stats-row"><span>Frequency</span><span class="value">' + state.frequency.toFixed(3) + ' Hz</span></div>';
   const imbClass = netImbalance > 0.5 ? 'positive' : (netImbalance < -0.5 ? 'negative' : '');
   html += '<div class="stats-row"><span>Net imbalance</span><span class="value ' + imbClass + '">' + (netImbalance > 0 ? '+' : '') + netImbalance.toFixed(1) + ' MW</span></div>';
