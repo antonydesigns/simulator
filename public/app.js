@@ -257,6 +257,19 @@ function simTick() {
         const stTC = 0.1;
         const prevResp = st.mwResponse || 0;
         st.mwResponse = prevResp + (target - prevResp) * Math.min(1, dt / stTC);
+      } else if (st.mode === 'grid-forming') {
+        const droop = st.droop || 0.04;
+        const dev = (freq - f0) / f0;
+        const govMod = -(1 / droop) * dev * dr;
+        // Freq restore integral — drives frequency back to 50 Hz
+        st.freqRestore = (st.freqRestore || 0) + 5 * (f0 - freq) * dt;
+        st.freqRestore = Math.max(-dr, Math.min(dr, st.freqRestore));
+        let target = bc + govMod + st.freqRestore;
+        target = Math.max(-cr, Math.min(dr, target));
+        target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
+        const stTC = 0.1;
+        const prevResp = st.mwResponse || 0;
+        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, dt / stTC);
       } else if (st.mode === 'fixed') {
         let target = bc + (st.fixedTarget || 0);
         target = Math.max(-cr, Math.min(dr, target));
@@ -301,6 +314,21 @@ function simTick() {
         }
       } else {
         gen.freqTimer = 0;
+      }
+    }
+
+    // --- Step 4b: Storage frequency protection ---
+    for (const st of storages) {
+      if (st.tripped || st.mode === 'grid-forming') continue;
+      if (net.freq > 52 || net.freq < 48) {
+        st.freqTimer = (st.freqTimer || 0) + dt;
+        if (st.freqTimer >= 1) {
+          st.tripped = true;
+          st.mwResponse = 0;
+          sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'storage-trip', nodeId: st.id, freq: net.freq, cause: net.freq > 52 ? 'overfrequency' : 'underfrequency' });
+        }
+      } else {
+        st.freqTimer = 0;
       }
     }
 
@@ -606,6 +634,7 @@ function restartSim() {
     st.baselineContract = 0;
     st.mwResponse = st.baselineContract || 0;
     st.agcOffset = 0;
+    st.freqRestore = 0;
     st.tripped = false;
   }
   // Reset tripped lines
@@ -637,6 +666,7 @@ function balanceGrid() {
     st.baselineContract = 0;
     st.mwResponse = 0;
     st.agcOffset = 0;
+    st.freqRestore = 0;
     st.tripped = false;
   }
   for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
@@ -1619,7 +1649,7 @@ function addNode(type, wx, wy) {
   } else if (type === 'generator') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, bidPrice: 50, bidQty: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, tripped: false, freqTimer: 0 };
   } else if (type === 'storage') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 500, dischargeRate: 500, maxCapacity: 100, mode: 'balancing', baselineContract: 0, fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0, agcOffset: 0 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 500, dischargeRate: 500, maxCapacity: 100, mode: 'balancing', baselineContract: 0, fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0, agcOffset: 0, freqRestore: 0, freqTimer: 0 };
   } else {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0 };
   }
@@ -2532,6 +2562,7 @@ function openSettings(nodeId) {
             <select class="storage-mode-select">
               <option value="balancing" ${mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option>
               <option value="fcr-only" ${mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option>
+              <option value="grid-forming" ${mode === 'grid-forming' ? 'selected' : ''}>Grid Forming</option>
               <option value="fixed" ${mode === 'fixed' ? 'selected' : ''}>Fixed</option>
             </select>
           </div>
@@ -2573,7 +2604,7 @@ function openSettings(nodeId) {
 
     entry.modeSelect.addEventListener('change', () => {
       node.mode = entry.modeSelect.value;
-      entry.fcrGroup.style.display = (node.mode === 'balancing' || node.mode === 'fcr-only') ? '' : 'none';
+      entry.fcrGroup.style.display = (node.mode === 'balancing' || node.mode === 'fcr-only' || node.mode === 'grid-forming') ? '' : 'none';
       entry.fixedGroup.style.display = node.mode === 'fixed' ? '' : 'none';
       if (entry.neutralGroup) entry.neutralGroup.style.display = node.mode === 'balancing' ? '' : 'none';
       persist();
