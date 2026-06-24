@@ -366,6 +366,7 @@ function simTick() {
 
     // --- Step 7: Under-Frequency Load Shedding (UFLS) ---
     if (hasLoad) {
+      const hasGFStorage = storages.some(s => s.mode === 'grid-forming');
       for (const load of loads) {
         if (load.baseMw === undefined) load.baseMw = load.mw || 0;
         const f = subFreqRef.value;
@@ -375,8 +376,8 @@ function simTick() {
         else if (f < 49.0) targetShed = 0.10;
         if (f < 49.5) {
           load.shedPct = Math.max(load.shedPct || 0, targetShed);
-        } else {
-          load.shedPct = 0;
+        } else if (!hasGFStorage) {
+          load.shedPct = 0; // only restore when no grid-forming storage running
         }
         load.mw = load.baseMw * (1 - (load.shedPct || 0));
       }
