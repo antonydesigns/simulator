@@ -225,7 +225,6 @@ function simTick() {
 
     // --- Step 2: Storage FCR ---
     for (const st of storages) {
-      st.mwResponse = 0;
       // Energy-neutral: FCR response only, no persistent AGC offset
       if (st.energyNeutral) st.agcOffset = 0;
       const bc = st.baselineContract || 0;
