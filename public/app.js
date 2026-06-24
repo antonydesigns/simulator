@@ -276,8 +276,10 @@ function simTick() {
       st.mw = Math.max(0, Math.min(cap, soc - st.mwResponse * physicsDt / 3600));
     }
 
+    const subTotalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
+    const subTotalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
     const totalStorage = storages.reduce((s, st) => s + (st.mwResponse || 0), 0);
-    const imbalance = totalGen + totalStorage - totalLoad;
+    const imbalance = subTotalGen + totalStorage - subTotalLoad;
 
     // --- Step 3: Swing equation ---
     if (gens.length > 0) {
