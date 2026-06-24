@@ -1501,6 +1501,25 @@ function solveDCPowerFlow(net) {
       c.mw = flow;
       c.loadingPct = (c.thermalLimit > 0) ? (Math.abs(flow) / c.thermalLimit) * 100 : 0;
     }
+
+    // Scale flows to match actual slack bus capability (storage/gen may be output-limited)
+    const slackNode = nodes[slack];
+    let actualSlackMW = 0;
+    if (slackNode.type === 'generator') actualSlackMW = slackNode.mw || 0;
+    else if (slackNode.type === 'storage') actualSlackMW = slackNode.mwResponse || 0;
+    let computedSlackMW = 0;
+    for (const c of conns) {
+      const si = busIdx[c.sourceId], ti = busIdx[c.targetId];
+      if (si === slack) computedSlackMW += c.mw;
+      else if (ti === slack) computedSlackMW -= c.mw;
+    }
+    if (Math.abs(computedSlackMW) > Math.abs(actualSlackMW) + 0.01 && Math.abs(actualSlackMW) > 0.01) {
+      const scale = Math.abs(actualSlackMW) / Math.abs(computedSlackMW);
+      for (const c of conns) {
+        c.mw *= scale;
+        c.loadingPct = (c.thermalLimit > 0) ? (Math.abs(c.mw) / c.thermalLimit) * 100 : 0;
+      }
+    }
   }
 
   // Any active connection not in a solved component → 0 flow
