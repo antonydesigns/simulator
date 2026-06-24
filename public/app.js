@@ -456,7 +456,6 @@ function simTick() {
       }
     }
     }
-
     // Sync network freq from sub-step ref at end of all physics sub-steps
     net.freq = subFreqRef.value;
   }
