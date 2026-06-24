@@ -131,45 +131,13 @@ function simTick() {
 
     if (gens.length === 0 && loads.length === 0 && allStorages.length === 0) continue;
 
-    // --- Step 1: Governor droop + baseline + AGC offset ---
-    for (const gen of gens) {
-      if (gen.tripped) { gen.mw = 0; continue; }
-      let totalTarget;
-      if (gen.mode === 'merchant') {
-        // Merchant gens just follow the merit order baseline — no FCR/AGC
-        totalTarget = gen.baselineContract || 0;
-      } else if (gen.mode === 'fixed') {
-        totalTarget = gen.baselineContract || 0;
-      } else if (gen.mode === 'fcr-only') {
-        // FCR only: baseline + droop, no AGC offset
-        const droop = gen.droop || 0.04;
-        const rating = gen.rating || 100;
-        const dev = (freq - f0) / f0;
-        const govMod = -(1 / droop) * dev * rating;
-        totalTarget = (gen.baselineContract || 0) + govMod;
-      } else {
-        // Balancing: full FCR + AGC
-        const droop = gen.droop || 0.04;
-        const rating = gen.rating || 100;
-        const dev = (freq - f0) / f0;
-        const govMod = -(1 / droop) * dev * rating;
-        totalTarget = (gen.baselineContract || 0) + govMod + (gen.agcOffset || 0);
-      }
-      const rating = gen.rating || Infinity;
-      totalTarget = Math.max(0, Math.min(rating, totalTarget));
-      const current = gen.mw || 0;
-      const T = totalTarget < current ? (gen.rampDownTC || 0.3) : (gen.turbineTimeConstant || 1);
-      gen.mw = current + (totalTarget - current) * dt / T;
-    }
-
     // --- Auto Demand Curve (noise) ---
     for (const load of loads) {
       if (load.noiseEnabled) {
-        const patSec = sim.simTime * 720; // 2 real min = 1 pattern day
+        const patSec = sim.simTime * 720;
         const mult = demandCurve(patSec);
-        // Add per-load random drift (slow random walk)
         const noisePct = (load.noisePct || 10) / 100;
-        const step = noisePct * 0.04; // ~25 ticks to swing full range
+        const step = noisePct * 0.04;
         load._noiseDrift = (load._noiseDrift || 0) + (Math.random() - 0.5) * step;
         load._noiseDrift = Math.max(-noisePct, Math.min(noisePct, load._noiseDrift));
         load.mw = Math.round((load.noiseMin || 100) + ((load.noiseMax || 200) - (load.noiseMin || 100)) * mult * (1 + load._noiseDrift));
@@ -190,12 +158,10 @@ function simTick() {
 
     // --- Handle stranded island types ---
     const hasGen = gens.length > 0, hasLoad = loads.length > 0, hasStor = storages.length > 0;
-    // A storage counts as effective supply if it has SoC and can respond
-    // (don't check mwResponse — it hasn't been computed for this tick yet)
     const hasEffectiveStor = storages.some(s =>
-      (s.mw || 0) > 0.5 && // meaningful SoC (>0.5 MWh)
-      s.mode !== 'fixed' && // responsive mode (balancing or fcr-only)
-      (s.dischargeRate || 50) > 0 // has physical discharge capacity
+      (s.mw || 0) > 0.5 &&
+      s.mode !== 'fixed' &&
+      (s.dischargeRate || 50) > 0
     );
     if (hasGen && !hasLoad && !hasStor) {
       for (const gen of gens) gen.mw = 0;
@@ -207,13 +173,11 @@ function simTick() {
       for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
     }
-    // Storage-only island (disconnected by tripped lines): no response, nominal freq
     if (!hasGen && !hasLoad && hasStor) {
       for (const st of storages) { st.mwResponse = 0; }
       for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
       net.freq = f0; continue;
     }
-    // Gen + storage island with no load — no demand to serve
     if (hasGen && !hasLoad && hasStor) {
       for (const gen of gens) gen.mw = 0;
       for (const st of storages) st.mwResponse = 0;
@@ -223,60 +187,93 @@ function simTick() {
 
     // Note: stranded loads within mixed islands are zeroed after the stranded detection step, below
 
+    // --- Physics sub-step loop (smooth at any sim speed) ---
+    {
+    const physicsSteps = Math.max(1, Math.ceil(dt / 0.05));
+    const physicsDt = dt / physicsSteps;
+    const subFreqRef = { value: net.freq }; // mutable ref for sub-step freq
+    for (let _p = 0; _p < physicsSteps; _p++) {
+      const subFreq = subFreqRef.value;
+
+    // --- Step 1: Governor droop + baseline + AGC offset ---
+    for (const gen of gens) {
+      if (gen.tripped) { gen.mw = 0; continue; }
+      let totalTarget;
+      if (gen.mode === 'merchant') {
+        totalTarget = gen.baselineContract || 0;
+      } else if (gen.mode === 'fixed') {
+        totalTarget = gen.baselineContract || 0;
+      } else if (gen.mode === 'fcr-only') {
+        const droop = gen.droop || 0.04;
+        const rating = gen.rating || 100;
+        const dev = (subFreq - f0) / f0;
+        const govMod = -(1 / droop) * dev * rating;
+        totalTarget = (gen.baselineContract || 0) + govMod;
+      } else {
+        const droop = gen.droop || 0.04;
+        const rating = gen.rating || 100;
+        const dev = (subFreq - f0) / f0;
+        const govMod = -(1 / droop) * dev * rating;
+        totalTarget = (gen.baselineContract || 0) + govMod + (gen.agcOffset || 0);
+      }
+      const genRating = gen.rating || Infinity;
+      totalTarget = Math.max(0, Math.min(genRating, totalTarget));
+      const current = gen.mw || 0;
+      const T = totalTarget < current ? (gen.rampDownTC || 0.3) : (gen.turbineTimeConstant || 1);
+      gen.mw = current + (totalTarget - current) * physicsDt / T;
+    }
+
     // --- Step 2: Storage FCR ---
     for (const st of storages) {
-      // Energy-neutral: FCR response only, no persistent AGC offset
       if (st.energyNeutral) st.agcOffset = 0;
       const bc = st.baselineContract || 0;
       const soc = st.mw || 0;
       const cap = st.maxCapacity || 100;
       const cr = st.chargeRate || 50;
       const dr = st.dischargeRate || 50;
-      const maxDischargeP = soc / (dt / 3600); // can't discharge more than what's stored
-      const maxChargeP = (cap - soc) / (dt / 3600); // can't charge more than room left
+      const maxDischargeP = soc / (physicsDt / 3600);
+      const maxChargeP = (cap - soc) / (physicsDt / 3600);
 
       if (st.mode === 'balancing') {
         const droop = st.droop || 0.04;
-        const dev = (freq - f0) / f0;
-        const effectiveRating = dr; // use discharge rate as MW rating for droop
+        const dev = (subFreq - f0) / f0;
+        const effectiveRating = dr;
         const govMod = -(1 / droop) * dev * effectiveRating;
         let target = bc + govMod + (st.agcOffset || 0);
         target = Math.max(-cr, Math.min(dr, target));
         target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
-        // Smooth response with time constant (storage can ramp fast but not slam)
         const stTC = 0.1;
         const prevResp = st.mwResponse || 0;
-        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, dt / stTC);
+        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, physicsDt / stTC);
       } else if (st.mode === 'fcr-only') {
         const droop = st.droop || 0.04;
-        const dev = (freq - f0) / f0;
+        const dev = (subFreq - f0) / f0;
         const govMod = -(1 / droop) * dev * dr;
         let target = bc + govMod;
         target = Math.max(-cr, Math.min(dr, target));
         target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
         const stTC = 0.1;
         const prevResp = st.mwResponse || 0;
-        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, dt / stTC);
+        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, physicsDt / stTC);
       } else if (st.mode === 'grid-forming') {
         const droop = st.droop || 0.04;
-        const dev = (freq - f0) / f0;
+        const dev = (subFreq - f0) / f0;
         const govMod = -(1 / droop) * dev * dr;
-        // Freq restore integral — drives frequency back to 50 Hz
-        st.freqRestore = (st.freqRestore || 0) + 5 * (f0 - freq) * dt;
+        st.freqRestore = (st.freqRestore || 0) + 5 * (f0 - subFreq) * physicsDt;
         st.freqRestore = Math.max(-dr, Math.min(dr, st.freqRestore));
         let target = bc + govMod + st.freqRestore;
         target = Math.max(-cr, Math.min(dr, target));
         target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
         const stTC = 0.1;
         const prevResp = st.mwResponse || 0;
-        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, dt / stTC);
+        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, physicsDt / stTC);
       } else if (st.mode === 'fixed') {
         let target = bc + (st.fixedTarget || 0);
         target = Math.max(-cr, Math.min(dr, target));
         target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
-        st.mwResponse = (st.mwResponse || 0) + (target - (st.mwResponse || 0)) * Math.min(1, dt / 0.1);
+        st.mwResponse = (st.mwResponse || 0) + (target - (st.mwResponse || 0)) * Math.min(1, physicsDt / 0.1);
       }
-      st.mw = Math.max(0, Math.min(cap, soc - st.mwResponse * dt / 3600));
+      st.mw = Math.max(0, Math.min(cap, soc - st.mwResponse * physicsDt / 3600));
     }
 
     const totalStorage = storages.reduce((s, st) => s + (st.mwResponse || 0), 0);
@@ -289,28 +286,27 @@ function simTick() {
       for (const gen of gens) totalInertiaEnergy += (gen.inertia || 5) * (gen.rating || 100);
       let dfdt = 0;
       if (totalInertiaEnergy > 0) dfdt = (imbalance * f0) / (2 * totalInertiaEnergy);
-      net.freq = Math.max(45, Math.min(55, freq + dfdt * dt));
+      subFreqRef.value = Math.max(45, Math.min(55, subFreq + dfdt * physicsDt));
     } else if (storages.length > 0) {
-      // Storage-only island: freq sustained by storage response
       net.freqPrev = net.freq;
-      const stoInertia = storages.reduce((s, st) => s + ((st.dischargeRate || 500) * 3), 0); // synthetic inertia from discharge capacity
+      const stoInertia = storages.reduce((s, st) => s + ((st.dischargeRate || 500) * 3), 0);
       let dfdt = stoInertia > 0 ? (imbalance * f0) / (2 * stoInertia) : 0;
-      net.freq = Math.max(45, Math.min(55, freq + dfdt * dt));
+      subFreqRef.value = Math.max(45, Math.min(55, subFreq + dfdt * physicsDt));
     } else {
       net.freqPrev = net.freq;
-      net.freq = Math.max(0, freq - 10 * dt);
+      subFreqRef.value = Math.max(0, subFreq - 10 * physicsDt);
     }
 
     // --- Step 4: Generator frequency protection ---
     for (const gen of allGens) {
       if (gen.tripped) continue;
-      if (net.freq > 52 || net.freq < 48) {
-        gen.freqTimer = (gen.freqTimer || 0) + dt;
+      if (subFreqRef.value > 52 || subFreqRef.value < 48) {
+        gen.freqTimer = (gen.freqTimer || 0) + physicsDt;
         if (gen.freqTimer >= 1) {
           gen.tripped = true;
           gen.mw = 0;
-          const cause = net.freq > 52 ? 'overspeed' : 'underfrequency';
-          sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'gen-trip', nodeId: gen.id, freq: net.freq, cause });
+          const cause = subFreqRef.value > 52 ? 'overspeed' : 'underfrequency';
+          sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'gen-trip', nodeId: gen.id, freq: subFreqRef.value, cause });
         }
       } else {
         gen.freqTimer = 0;
@@ -320,12 +316,12 @@ function simTick() {
     // --- Step 4b: Storage frequency protection ---
     for (const st of storages) {
       if (st.tripped || st.mode === 'grid-forming') continue;
-      if (net.freq > 52 || net.freq < 48) {
-        st.freqTimer = (st.freqTimer || 0) + dt;
+      if (subFreqRef.value > 52 || subFreqRef.value < 48) {
+        st.freqTimer = (st.freqTimer || 0) + physicsDt;
         if (st.freqTimer >= 1) {
           st.tripped = true;
           st.mwResponse = 0;
-          sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'storage-trip', nodeId: st.id, freq: net.freq, cause: net.freq > 52 ? 'overfrequency' : 'underfrequency' });
+          sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'storage-trip', nodeId: st.id, freq: subFreqRef.value, cause: subFreqRef.value > 52 ? 'overfrequency' : 'underfrequency' });
         }
       } else {
         st.freqTimer = 0;
@@ -333,14 +329,14 @@ function simTick() {
     }
 
     // --- Step 5: DC Power Flow ---
-    try { solveDCPowerFlow(net); } catch (e) { /* solver may fail for degenerate cases */ }
+    if (hasLoad) solveDCPowerFlow(net, state.nodes, state.connections);
 
-    // --- Step 6: Line tripping ---
+    // --- Step 6: Line Overload / trip logic ---
     const tripCurve = [
       { limit: 200, time: 0.5 },
-      { limit: 150, time: 2 },
+      { limit: 150, time: 1 },
       { limit: 120, time: 5 },
-      { limit: 100, time: 10 }
+      { limit: 100, time: Infinity },
     ];
     const netConns = state.connections.filter(c =>
       net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)
@@ -349,13 +345,12 @@ function simTick() {
       if (c.tripped) continue;
       const pct = c.loadingPct || 0;
       if (pct > 100) {
-        // Find threshold
         let tripTime = 0;
         for (const tc of tripCurve) {
           if (pct >= tc.limit) { tripTime = tc.time; break; }
         }
         if (tripTime > 0) {
-          c.tripTimer = (c.tripTimer || 0) + dt;
+          c.tripTimer = (c.tripTimer || 0) + physicsDt;
           if (c.tripTimer >= tripTime) {
             c.tripped = true;
             c.tripTimer = tripTime;
@@ -371,7 +366,7 @@ function simTick() {
     if (hasLoad) {
       for (const load of loads) {
         if (load.baseMw === undefined) load.baseMw = load.mw || 0;
-        const f = net.freq;
+        const f = subFreqRef.value;
         let targetShed = 0;
         if (f < 48.0) targetShed = 0.50;
         else if (f < 48.5) targetShed = 0.25;
@@ -385,15 +380,33 @@ function simTick() {
       }
     }
 
+    // --- Step 7b: Blackout load shedding (grid-forming headroom) ---
+    if (hasLoad) {
+      const gfStorages = storages.filter(s => s.mode === 'grid-forming');
+      if (gfStorages.length > 0) {
+        const gfCapacity = gfStorages.reduce((s, st) => s + (st.dischargeRate || 500), 0);
+        const targetLoad = gfCapacity * 0.5;
+        const currentLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
+        if (currentLoad > targetLoad) {
+          const scale = targetLoad / currentLoad;
+          for (const load of loads) {
+            const newMw = (load.mw || 0) * scale;
+            load.shedPct = Math.max(load.shedPct || 0, 1 - (newMw / (load.baseMw || load.mw)));
+            load.mw = newMw;
+          }
+        }
+      }
+    }
+
     // --- Step 8: AGC (gens) ---
     const balancingGens = gens.filter(g => g.mode === 'balancing');
-    const freqErr = f0 - net.freq;
+    const freqErr = f0 - subFreqRef.value;
     if (balancingGens.length > 0) {
       const agcRateLimit = 5;
-      const maxDelta = agcRateLimit * dt;
+      const maxDelta = agcRateLimit * physicsDt;
       const totalHeadroom = balancingGens.reduce((s, g) => s + Math.max(0, (g.rating || 100) - (g.baselineContract || 0) - (g.fcrHeadroom || 10)), 0);
       if (totalHeadroom > 0) {
-        const totalAgc = 50 * freqErr * dt;
+        const totalAgc = 50 * freqErr * physicsDt;
         for (const gen of balancingGens) {
           const upwardHeadroom = Math.max(0, (gen.rating || 100) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10));
           const share = upwardHeadroom / totalHeadroom;
@@ -412,16 +425,16 @@ function simTick() {
     // --- Step 8b: AGC (storage) ---
     const balancingStorages = storages.filter(s => s.mode === 'balancing' && !s.energyNeutral && (s.dischargeRate || 500) > 0);
     if (balancingStorages.length > 0) {
-      const agcRateLimit = 20; // storage can ramp faster than gens
-      const maxDelta = agcRateLimit * dt;
+      const agcRateLimit = 20;
+      const maxDelta = agcRateLimit * physicsDt;
       const totalStorHeadroom = balancingStorages.reduce((s, st) => {
         const bc = st.baselineContract || 0;
         const dr = st.dischargeRate || 500;
         const cr = st.chargeRate || 500;
-        return s + Math.max(0, dr - bc) + Math.max(0, bc + cr); // upward + downward headroom
+        return s + Math.max(0, dr - bc) + Math.max(0, bc + cr);
       }, 0);
       if (totalStorHeadroom > 0) {
-        const totalAgc = 100 * freqErr * dt; // storage AGC is more aggressive
+        const totalAgc = 100 * freqErr * physicsDt;
         for (const st of balancingStorages) {
           const bc = st.baselineContract || 0;
           const dr = st.dischargeRate || 500;
@@ -439,6 +452,11 @@ function simTick() {
         }
       }
     }
+    }
+
+    // Sync network freq from sub-step ref at end of all physics sub-steps
+    net.freq = subFreqRef.value;
+  }
   }
 
   // Update global state.frequency for backward compat (first network's freq)
