@@ -16,6 +16,7 @@ const state = {
   marketLoad: 0,
   clipboard: null, // { nodes: [...copied nodes...], connections: [...] }
   lineClipboard: null, // { reactance, thermalLimit } from a copied line
+  statsBreakdownExpanded: new Set(), // nodeIds whose breakdown rows are expanded in stats panel
 };
 
 let hoveredIslandId = null;
@@ -216,6 +217,8 @@ function simTick() {
     // --- Step 2: Storage FCR ---
     for (const st of storages) {
       st.mwResponse = 0;
+      // Energy-neutral: FCR response only, no persistent AGC offset
+      if (st.energyNeutral) st.agcOffset = 0;
       const bc = st.baselineContract || 0;
       const soc = st.mw || 0;
       const cap = st.maxCapacity || 100;
@@ -371,7 +374,7 @@ function simTick() {
     }
 
     // --- Step 8b: AGC (storage) ---
-    const balancingStorages = storages.filter(s => s.mode === 'balancing' && (s.dischargeRate || 500) > 0);
+    const balancingStorages = storages.filter(s => s.mode === 'balancing' && !s.energyNeutral && (s.dischargeRate || 500) > 0);
     if (balancingStorages.length > 0) {
       const agcRateLimit = 20; // storage can ramp faster than gens
       const maxDelta = agcRateLimit * dt;
@@ -396,11 +399,6 @@ function simTick() {
             const maxStAgc = dr - bc - (st.fcrHeadroom || 10);
             const minStAgc = -(cr + bc - (st.fcrHeadroom || 10));
             st.agcOffset = Math.max(minStAgc, Math.min(maxStAgc, st.agcOffset));
-          }
-          // Energy-neutral washout: decay AGC offset toward 0 when freq is stable
-          if (st.energyNeutral && Math.abs(freqErr) < 0.01) {
-            st.agcOffset = (st.agcOffset || 0) * Math.exp(-dt / 5);
-            if (Math.abs(st.agcOffset) < 0.001) st.agcOffset = 0;
           }
         }
       }
@@ -1817,7 +1815,7 @@ function hideMenu() { menu.classList.add('hidden'); }
 
 // ─── Events ────────────────────────────────────────────────────────────
 
-canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); });
+document.addEventListener('contextmenu', (e) => { e.preventDefault(); });
 
 document.addEventListener('keydown', (e) => {
   if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); if (!state.spaceDown) { state.spaceDown = true; updateCursor(); } }
@@ -2831,6 +2829,15 @@ speedSlider.addEventListener('input', () => {
 let statsPanelVisible = false;
 let selectedNetworkId = 'all';
 
+function toggleStatsBreakdown(nodeId) {
+  if (state.statsBreakdownExpanded.has(nodeId)) {
+    state.statsBreakdownExpanded.delete(nodeId);
+  } else {
+    state.statsBreakdownExpanded.add(nodeId);
+  }
+  updateStatsPanel();
+}
+
 function updateStatsPanel() {
   const body = document.getElementById('stats-body');
   if (!body || !statsPanelVisible) return;
@@ -2892,9 +2899,16 @@ function updateStatsPanel() {
     const dev = (islandFreq - 50) / 50;
     const govMod = -(1 / (gen.droop || 0.04)) * dev * (gen.rating || 100);
     const agcComp = gen.agcOffset || 0;
-    if (Math.abs(govMod) > 0.5 || Math.abs(agcComp) > 0.5) {
-      html += '<div class="stats-row" style="padding-left:12px;font-size:12px;color:#999;">';
-      html += '<span>base ' + Math.round(base) + ' + FCR ' + (govMod >= 0 ? '+' : '') + Math.round(govMod) + ' + AGC ' + (agcComp >= 0 ? '+' : '') + Math.round(agcComp) + '</span>';
+    const genExpanded = state.statsBreakdownExpanded.has(gen.id);
+    if (genExpanded) {
+      html += '<div class="stats-breakdown-row">';
+      html += '<span class="stats-toggle" onclick="toggleStatsBreakdown(\'' + gen.id + '\')">▼ </span>';
+      html += '<span class="stats-breakdown-value">base ' + Math.round(base) + ' + FCR ' + (govMod >= 0 ? '+' : '') + Math.round(govMod) + ' + AGC ' + (agcComp >= 0 ? '+' : '') + Math.round(agcComp) + '</span>';
+      html += '</div>';
+    } else {
+      html += '<div class="stats-breakdown-row">';
+      html += '<span class="stats-toggle" onclick="toggleStatsBreakdown(\'' + gen.id + '\')">▶</span>';
+      html += '<span class="stats-breakdown-value"></span>';
       html += '</div>';
     }
   }
@@ -2924,9 +2938,16 @@ function updateStatsPanel() {
       const sDev = (islandFreq - 50) / 50;
       const sGovMod = -(1 / (st.droop || 0.04)) * sDev * (st.dischargeRate || 500);
       const sAgc = st.agcOffset || 0;
-      if (Math.abs(sGovMod) > 0.5 || Math.abs(sAgc) > 0.5) {
-        html += '<div class="stats-row" style="padding-left:12px;font-size:12px;color:#999;">';
-        html += '<span>base ' + Math.round(bc) + ' + FCR ' + (sGovMod >= 0 ? '+' : '') + Math.round(sGovMod) + ' + AGC ' + (sAgc >= 0 ? '+' : '') + Math.round(sAgc) + '</span>';
+      const stExpanded = state.statsBreakdownExpanded.has(st.id);
+      if (stExpanded) {
+        html += '<div class="stats-breakdown-row">';
+        html += '<span class="stats-toggle" onclick="toggleStatsBreakdown(\'' + st.id + '\')">▼ </span>';
+        html += '<span class="stats-breakdown-value">base ' + Math.round(bc) + ' + FCR ' + (sGovMod >= 0 ? '+' : '') + Math.round(sGovMod) + ' + AGC ' + (sAgc >= 0 ? '+' : '') + Math.round(sAgc) + '</span>';
+        html += '</div>';
+      } else {
+        html += '<div class="stats-breakdown-row">';
+        html += '<span class="stats-toggle" onclick="toggleStatsBreakdown(\'' + st.id + '\')">▶</span>';
+        html += '<span class="stats-breakdown-value"></span>';
         html += '</div>';
       }
     }
