@@ -381,7 +381,7 @@ function simTick() {
     }
 
     // --- Step 7b: Blackout load shedding (grid-forming headroom) ---
-    if (hasLoad) {
+    if (hasLoad && !hasGen) {
       const gfStorages = storages.filter(s => s.mode === 'grid-forming');
       if (gfStorages.length > 0) {
         const gfCapacity = gfStorages.reduce((s, st) => s + (st.dischargeRate || 500), 0);
