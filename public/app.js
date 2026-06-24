@@ -133,13 +133,22 @@ function simTick() {
 
     // --- Step 1: Governor droop + baseline + AGC offset ---
     for (const gen of gens) {
+      if (gen.tripped) { gen.mw = 0; continue; }
       let totalTarget;
       if (gen.mode === 'merchant') {
         // Merchant gens just follow the merit order baseline — no FCR/AGC
         totalTarget = gen.baselineContract || 0;
       } else if (gen.mode === 'fixed') {
         totalTarget = gen.baselineContract || 0;
+      } else if (gen.mode === 'fcr-only') {
+        // FCR only: baseline + droop, no AGC offset
+        const droop = gen.droop || 0.04;
+        const rating = gen.rating || 100;
+        const dev = (freq - f0) / f0;
+        const govMod = -(1 / droop) * dev * rating;
+        totalTarget = (gen.baselineContract || 0) + govMod;
       } else {
+        // Balancing: full FCR + AGC
         const droop = gen.droop || 0.04;
         const rating = gen.rating || 100;
         const dev = (freq - f0) / f0;
