@@ -73,8 +73,8 @@ export class SimulationEngine {
   
 
   simTick() {
-      const { state, sim } = this.store;
-      const { draw, updateControls, updateStatsPanel } = this.callbacks;
+      const { state, sim, openPanels, freqChartVisible, meritChartVisible } = this.store;
+      const { draw, updateControls, updateStatsPanel, drawFreqChart, drawMeritOrderChart } = this.callbacks;
     
     this.recomputeNetworks();
     const f0 = 50;
@@ -648,7 +648,7 @@ export class SimulationEngine {
   
 
   balanceGrid() {
-      const { state, sim } = this.store;
+      const { state, sim, openPanels } = this.store;
       const { draw, updateControls, updateStatsPanel } = this.callbacks;
     
     // Balance supply with demand per island.
