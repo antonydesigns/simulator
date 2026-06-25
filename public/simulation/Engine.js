@@ -478,18 +478,18 @@ export class SimulationEngine {
           const fcr = gen.fcrHeadroom || 10;
           let headroom;
           if (freqErr >= 0) {
-            // Need upward correction (deficit) — share of upward headroom
-            headroom = Math.max(0, rating - bc - fcr);
+            // Need upward correction (deficit) — share of upward headroom from actual output
+            headroom = Math.max(0, rating - (gen.mw || 0) - fcr);
           } else {
-            // Need downward correction (surplus) — share of downward headroom
-            headroom = Math.max(0, bc - fcr);
+            // Need downward correction (surplus) — share of downward headroom from actual output
+            headroom = Math.max(0, (gen.mw || 0) - fcr);
           }
           if (headroom <= 0) continue;
 
           // Total headroom in the needed direction
           const totalDirHeadroom = balancingGens.reduce((s, g) => {
-            const r = g.rating || 100; const b = g.baselineContract || 0; const c = g.fcrHeadroom || 10;
-            return s + (freqErr >= 0 ? Math.max(0, r - b - c) : Math.max(0, b - c));
+            const r = g.rating || 100; const m = g.mw || 0; const c = g.fcrHeadroom || 10;
+            return s + (freqErr >= 0 ? Math.max(0, r - m - c) : Math.max(0, m - c));
           }, 0);
           if (totalDirHeadroom <= 0) continue;
 
