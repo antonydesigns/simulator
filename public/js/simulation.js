@@ -1,0 +1,944 @@
+import { state, sim, ISLAND_COLORS, openPanels } from './state.js';
+import { persist } from './storage.js';
+import { draw, drawFreqChart, drawMeritOrderChart } from './renderer.js';
+import { updateControls, updateStatsPanel } from './panels.js';
+
+// ─── Island Detection ──────────────────────────────────────────────────
+
+function setsEqual(a, b) {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
+}
+
+export function computeBoundingBox(net) {
+  const nodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+  if (nodes.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    if (n.x < minX) minX = n.x;
+    if (n.y < minY) minY = n.y;
+    if (n.x > maxX) maxX = n.x;
+    if (n.y > maxY) maxY = n.y;
+  }
+  const pad = 60;
+  return { x: minX - pad, y: minY - pad, w: (maxX - minX) + pad * 2, h: (maxY - minY) + pad * 2 };
+}
+
+export function findNetworks() {
+  const visited = new Set();
+  const components = [];
+  const adj = {};
+  for (const n of state.nodes) adj[n.id] = [];
+  for (const c of state.connections) {
+    if (c.tripped) continue;
+    if (!adj[c.sourceId]) adj[c.sourceId] = [];
+    if (!adj[c.targetId]) adj[c.targetId] = [];
+    adj[c.sourceId].push(c.targetId);
+    adj[c.targetId].push(c.sourceId);
+  }
+  for (const n of state.nodes) {
+    if (visited.has(n.id)) continue;
+    const nodeIds = new Set();
+    const queue = [n.id];
+    visited.add(n.id);
+    while (queue.length) {
+      const id = queue.shift();
+      nodeIds.add(id);
+      for (const neighbor of (adj[id] || [])) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          queue.push(neighbor);
+        }
+      }
+    }
+    components.push(nodeIds);
+  }
+
+  // Reuse old network objects to preserve customName across ticks
+  const oldNets = state.networks || [];
+  const newNets = [];
+  for (const nodeIds of components) {
+    const netNodes = [...nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+    const hasGen = netNodes.some(n => n.type === 'generator');
+    const hasLoad = netNodes.some(n => n.type === 'load');
+    const hasConnection = state.connections.some(c => nodeIds.has(c.sourceId) && nodeIds.has(c.targetId));
+    const match = oldNets.find(o => o.nodeIds && setsEqual(o.nodeIds, nodeIds));
+    const net = match || { id: 'net_' + newNets.length, freq: 50, color: ISLAND_COLORS[newNets.length % ISLAND_COLORS.length] };
+    net.nodeIds = nodeIds;
+    net.valid = (hasGen || hasLoad) && hasConnection;
+    net.boundingBox = computeBoundingBox(net);
+    if (!match) net.customName = null;
+    newNets.push(net);
+  }
+  return newNets;
+}
+
+export function recomputeNetworks() {
+  state.networks = findNetworks();
+  // Ensure freqPrev is initialized for all networks
+  for (const net of state.networks) {
+    if (net.freqPrev === undefined) net.freqPrev = net.freq || 50;
+  }
+}
+
+// ─── DC Power Flow ─────────────────────────────────────────────────────
+
+function solveDCPowerFlow(net) {
+  const allNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+  if (allNodes.length < 2) return;
+
+  const allConns = state.connections.filter(c =>
+    !c.tripped && net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId) && (c.reactance || 0) > 0
+  );
+  if (allConns.length === 0) return;
+
+  // Build adjacency from active connections to find connected subgraphs
+  const adj = {};
+  for (const n of allNodes) adj[n.id] = [];
+  for (const c of allConns) {
+    adj[c.sourceId].push(c.targetId);
+    adj[c.targetId].push(c.sourceId);
+  }
+
+  // Find connected components within the active graph
+  const visited = new Set();
+  const components = []; // each: { nodeIds: Set, conns: [] }
+  for (const n of allNodes) {
+    if (visited.has(n.id)) continue;
+    const nodeIds = new Set();
+    const queue = [n.id]; visited.add(n.id);
+    while (queue.length) {
+      const id = queue.shift(); nodeIds.add(id);
+      for (const neighbor of (adj[id] || [])) {
+        if (!visited.has(neighbor)) { visited.add(neighbor); queue.push(neighbor); }
+      }
+    }
+    const compNodes = allNodes.filter(n => nodeIds.has(n.id));
+    const compConns = allConns.filter(c => nodeIds.has(c.sourceId) && nodeIds.has(c.targetId));
+    if (compNodes.length >= 2 && compConns.length > 0) components.push({ nodes: compNodes, conns: compConns });
+  }
+
+  // Solve each component independently
+  for (const comp of components) {
+    const { nodes, conns } = comp;
+    const nB = nodes.length;
+    const busIdx = {};
+    nodes.forEach((n, i) => { busIdx[n.id] = i; });
+
+    const B = Array.from({ length: nB }, () => new Float64Array(nB));
+    const P = new Float64Array(nB);
+
+    for (const c of conns) {
+      const i = busIdx[c.sourceId], j = busIdx[c.targetId];
+      const bij = 1 / c.reactance;
+      B[i][j] -= bij; B[j][i] -= bij;
+      B[i][i] += bij; B[j][j] += bij;
+    }
+
+    for (const n of nodes) {
+      const idx = busIdx[n.id];
+      if (n.tripped) continue;
+      if (n.type === 'generator') P[idx] += (n.mw || 0);
+      else if (n.type === 'load') P[idx] -= (n.mw || 0);
+      else if (n.type === 'storage') P[idx] += (n.mwResponse || 0);
+    }
+
+    // If no active supply in this component, zero flows and skip
+    const hasActiveInjection = nodes.some(n => !n.tripped && (
+      (n.type === 'generator' && (n.mw || 0) > 0) || (n.type === 'storage' && (n.mwResponse || 0) > 0)
+    ));
+    if (!hasActiveInjection) {
+      for (const c of conns) { c.mw = 0; c.loadingPct = 0; }
+      continue;
+    }
+
+    let slack = nodes.findIndex(n => !n.tripped && n.type === 'generator' && (n.mw || 0) > 0);
+    if (slack < 0) slack = nodes.findIndex(n => !n.tripped && n.type === 'storage' && (n.mwResponse || 0) > 0);
+    if (slack < 0) slack = 0;
+
+    const map = [];
+    for (let i = 0; i < nB; i++) if (i !== slack) map.push(i);
+    const m = map.length;
+    if (m === 0) continue;
+
+    const Br = Array.from({ length: m }, () => new Float64Array(m));
+    const Pr = new Float64Array(m);
+    for (let ri = 0; ri < m; ri++) {
+      for (let rj = 0; rj < m; rj++) Br[ri][rj] = B[map[ri]][map[rj]];
+      Pr[ri] = P[map[ri]];
+    }
+
+    for (let col = 0; col < m - 1; col++) {
+      let pivot = col;
+      for (let r = col + 1; r < m; r++) if (Math.abs(Br[r][col]) > Math.abs(Br[pivot][col])) pivot = col;
+      if (Math.abs(Br[pivot][col]) < 1e-12) continue;
+      if (pivot !== col) { [Br[col], Br[pivot]] = [Br[pivot], Br[col]]; [Pr[col], Pr[pivot]] = [Pr[pivot], Pr[col]]; }
+      for (let r = col + 1; r < m; r++) {
+        const f = Br[r][col] / Br[col][col];
+        for (let c = col; c < m; c++) Br[r][c] -= f * Br[col][c];
+        Pr[r] -= f * Pr[col];
+      }
+    }
+
+    const theta = new Float64Array(nB);
+    for (let i = m - 1; i >= 0; i--) {
+      let s = Pr[i];
+      for (let j = i + 1; j < m; j++) s -= Br[i][j] * theta[map[j]];
+      theta[map[i]] = Br[i][i] !== 0 ? s / Br[i][i] : 0;
+    }
+
+    for (const c of conns) {
+      const i = busIdx[c.sourceId], j = busIdx[c.targetId];
+      const flow = (theta[i] - theta[j]) / c.reactance;
+      c.mw = flow;
+      c.loadingPct = (c.thermalLimit > 0) ? (Math.abs(flow) / c.thermalLimit) * 100 : 0;
+    }
+
+    // Scale flows to match actual slack bus capability (storage/gen may be output-limited)
+    const slackNode = nodes[slack];
+    let actualSlackMW = 0;
+    if (slackNode.type === 'generator') actualSlackMW = slackNode.mw || 0;
+    else if (slackNode.type === 'storage') actualSlackMW = slackNode.mwResponse || 0;
+    let computedSlackMW = 0;
+    for (const c of conns) {
+      const si = busIdx[c.sourceId], ti = busIdx[c.targetId];
+      if (si === slack) computedSlackMW += c.mw;
+      else if (ti === slack) computedSlackMW -= c.mw;
+    }
+    if (Math.abs(computedSlackMW) > Math.abs(actualSlackMW) + 0.01 && Math.abs(actualSlackMW) > 0.01) {
+      const scale = Math.abs(actualSlackMW) / Math.abs(computedSlackMW);
+      for (const c of conns) {
+        c.mw *= scale;
+        c.loadingPct = (c.thermalLimit > 0) ? (Math.abs(c.mw) / c.thermalLimit) * 100 : 0;
+      }
+    }
+  }
+
+  // Any active connection not in a solved component → 0 flow
+  for (const c of allConns) {
+    if (c.mw === undefined) { c.mw = 0; c.loadingPct = 0; }
+  }
+}
+
+// ─── Demand Curve ──────────────────────────────────────────────────────
+
+export function demandCurve(t) {
+  const day = 86400;
+  const week = 7 * day;
+  const tod = (((t % day) / day) * 24 + 24) % 24; // hour of day (0-24)
+  const dow = Math.floor((t % week) / day); // day of week (0-6, Mon=0)
+
+  // Daily shape: valley ~4AM, morning peak ~10AM, afternoon peak ~4-6PM
+  let daily = 0.5 - 0.45 * Math.cos((tod - 4) / 24 * 2 * Math.PI);
+  // Morning bump (~10AM)
+  daily += 0.15 * Math.exp(-Math.pow((tod - 10) / 1.5, 2));
+  // Lunch recovery bump
+  daily += 0.05 * Math.exp(-Math.pow((tod - 14) / 2, 2));
+  daily = Math.max(0, Math.min(1, daily));
+
+  // Weekly: weekends (Sat=5, Sun=6) 15% lower
+  const weekend = (dow === 5 || dow === 6) ? 0.85 : 1;
+  return daily * weekend;
+}
+
+// ─── Merit Order Dispatch ────────────────────────────────────────────────
+
+export function dispatchMeritOrder() {
+  const allGens = state.nodes.filter(n => n.type === 'generator' && !n.tripped);
+  // Sort all non-fixed gens by bid price (cheapest first)
+  const merit = allGens.filter(g => g.mode !== 'fixed').sort((a, b) => a.bidPrice - b.bidPrice);
+  const totalLoad = state.nodes.filter(n => n.type === 'load').reduce((s, l) => s + (l.mw || 0), 0);
+
+  // Reset baselines for merchant + balancing gens (fixed gens keep manual baseline)
+  for (const gen of allGens) {
+    if (gen.mode !== 'fixed') gen.baselineContract = 0;
+  }
+
+  let remaining = totalLoad;
+  let smp = 0;
+
+  for (const gen of merit) {
+    const qty = gen.bidQty || gen.rating || 100;
+    const dispatch = Math.min(remaining, qty);
+    gen.baselineContract = Math.max(0, dispatch);
+    remaining -= dispatch;
+    if (dispatch > 0) smp = gen.bidPrice;
+  }
+
+  state.smp = remaining <= 0 ? smp : null; // null = insufficient capacity
+  state.marketLoad = totalLoad;
+}
+
+// ─── Physics Tick ──────────────────────────────────────────────────────
+
+function simTick() {
+  recomputeNetworks();
+  const f0 = 50;
+  const dt = (1 / sim.tickHz) * sim.speed;
+  sim.simTime += dt;
+
+  // Clear stale line flow data — only recomputed lines get updated
+  for (const c of state.connections) {
+    c.mw = undefined;
+    c.loadingPct = undefined;
+  }
+
+  for (const net of state.networks) {
+    const freq = net.freq;
+    const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+    const allGens = netNodes.filter(n => n.type === 'generator');
+    const gens = allGens.filter(g => !g.tripped);
+    const loads = netNodes.filter(n => n.type === 'load');
+    const allStorages = netNodes.filter(n => n.type === 'storage');
+    const storages = allStorages.filter(s => !s.tripped);
+
+    if (gens.length === 0 && loads.length === 0 && allStorages.length === 0) continue;
+
+    // --- Auto Demand Curve (noise) ---
+    for (const load of loads) {
+      if (load.noiseEnabled) {
+        const patSec = sim.simTime * 720;
+        const mult = demandCurve(patSec);
+        const noisePct = (load.noisePct || 10) / 100;
+        const step = noisePct * 0.04;
+        load._noiseDrift = (load._noiseDrift || 0) + (Math.random() - 0.5) * step;
+        load._noiseDrift = Math.max(-noisePct, Math.min(noisePct, load._noiseDrift));
+        load.mw = Math.round((load.noiseMin || 100) + ((load.noiseMax || 200) - (load.noiseMin || 100)) * mult * (1 + load._noiseDrift));
+        load.baseMw = load.mw;
+      }
+    }
+
+    // --- Market dispatch (15 pattern-minutes = 900 pattern-seconds) ---
+    const patSec = sim.simTime * 720;
+    if (patSec - (sim.lastMarketPat || 0) >= 900) {
+      sim.lastMarketPat = patSec;
+      dispatchMeritOrder();
+      if (state.meritChartVisible) drawMeritOrderChart();
+    }
+
+    const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
+    const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
+
+    // --- Handle stranded island types ---
+    const hasEffectiveStor = storages.some(s =>
+      (s.mw || 0) > 0.5 &&
+      s.mode !== 'fixed' &&
+      (s.dischargeRate || 50) > 0
+    );
+    if (hasGen && !hasLoad && !hasStor) {
+      for (const gen of gens) gen.mw = 0;
+      for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
+      net.freq = f0; continue;
+    }
+    if (!hasGen && !hasEffectiveStor && hasLoad) {
+      for (const load of loads) { load.mw = 0; state.strandedLoadIds.add(load.id); }
+      for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
+      net.freq = f0; continue;
+    }
+    if (!hasGen && !hasLoad && hasStor) {
+      for (const st of storages) { st.mwResponse = 0; }
+      for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
+      net.freq = f0; continue;
+    }
+    if (hasGen && !hasLoad && hasStor) {
+      for (const gen of gens) gen.mw = 0;
+      for (const st of storages) st.mwResponse = 0;
+      for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
+      net.freq = f0; continue;
+    }
+
+    // Note: stranded loads within mixed islands are zeroed after the stranded detection step, below
+
+    // --- Physics sub-step loop (smooth at any sim speed) ---
+    {
+    const physicsSteps = Math.max(1, Math.ceil(dt / 0.05));
+    const physicsDt = dt / physicsSteps;
+    const subFreqRef = { value: net.freq }; // mutable ref for sub-step freq
+    for (let _p = 0; _p < physicsSteps; _p++) {
+      const subFreq = subFreqRef.value;
+
+    // --- Step 1: Governor droop + baseline + AGC offset ---
+    for (const gen of gens) {
+      if (gen.tripped) { gen.mw = 0; continue; }
+      let totalTarget;
+      if (gen.mode === 'merchant') {
+        totalTarget = gen.baselineContract || 0;
+      } else if (gen.mode === 'fixed') {
+        totalTarget = gen.baselineContract || 0;
+      } else if (gen.mode === 'fcr-only') {
+        const droop = gen.droop || 0.04;
+        const rating = gen.rating || 100;
+        const dev = (subFreq - f0) / f0;
+        const govMod = -(1 / droop) * dev * rating;
+        totalTarget = (gen.baselineContract || 0) + govMod;
+      } else {
+        const droop = gen.droop || 0.04;
+        const rating = gen.rating || 100;
+        const dev = (subFreq - f0) / f0;
+        const govMod = -(1 / droop) * dev * rating;
+        totalTarget = (gen.baselineContract || 0) + govMod + (gen.agcOffset || 0);
+      }
+      const genRating = gen.rating || Infinity;
+      totalTarget = Math.max(0, Math.min(genRating, totalTarget));
+      const current = gen.mw || 0;
+      const T = totalTarget < current ? (gen.rampDownTC || 0.3) : (gen.turbineTimeConstant || 1);
+      gen.mw = current + (totalTarget - current) * physicsDt / T;
+    }
+
+    // --- Step 2: Storage FCR ---
+    for (const st of storages) {
+      if (st.energyNeutral) st.agcOffset = 0;
+      const bc = st.baselineContract || 0;
+      const soc = st.mw || 0;
+      const cap = st.maxCapacity || 100;
+      const cr = st.chargeRate || 50;
+      const dr = st.dischargeRate || 50;
+      const maxDischargeP = soc / (physicsDt / 3600);
+      const maxChargeP = (cap - soc) / (physicsDt / 3600);
+
+      if (st.mode === 'balancing') {
+        const droop = st.droop || 0.04;
+        const dev = (subFreq - f0) / f0;
+        const govMod = -(1 / droop) * dev * dr;
+        let target = bc + govMod + (st.agcOffset || 0);
+        target = Math.max(-cr, Math.min(dr, target));
+        target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
+        const stTC = 0.1;
+        const prevResp = st.mwResponse || 0;
+        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, physicsDt / stTC);
+      } else if (st.mode === 'fcr-only') {
+        const droop = st.droop || 0.04;
+        const dev = (subFreq - f0) / f0;
+        const govMod = -(1 / droop) * dev * dr;
+        let target = bc + govMod;
+        target = Math.max(-cr, Math.min(dr, target));
+        target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
+        const stTC = 0.1;
+        const prevResp = st.mwResponse || 0;
+        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, physicsDt / stTC);
+      } else if (st.mode === 'grid-forming') {
+        const droop = st.droop || 0.04;
+        const dev = (subFreq - f0) / f0;
+        const govMod = -(1 / droop) * dev * dr;
+        st.freqRestore = (st.freqRestore || 0) + 5 * (f0 - subFreq) * physicsDt;
+        st.freqRestore = Math.max(-dr, Math.min(dr, st.freqRestore));
+        let target = bc + govMod + st.freqRestore;
+        target = Math.max(-cr, Math.min(dr, target));
+        target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
+        const stTC = 0.1;
+        const prevResp = st.mwResponse || 0;
+        st.mwResponse = prevResp + (target - prevResp) * Math.min(1, physicsDt / stTC);
+      } else if (st.mode === 'fixed') {
+        let target = bc + (st.fixedTarget || 0);
+        target = Math.max(-cr, Math.min(dr, target));
+        target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
+        st.mwResponse = (st.mwResponse || 0) + (target - (st.mwResponse || 0)) * Math.min(1, physicsDt / 0.1);
+      }
+      st.mw = Math.max(0, Math.min(cap, soc - st.mwResponse * physicsDt / 3600));
+    }
+
+    const subTotalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
+    const subTotalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
+    const totalStorage = storages.reduce((s, st) => s + (st.mwResponse || 0), 0);
+    const imbalance = subTotalGen + totalStorage - subTotalLoad;
+
+    // --- Step 3: Swing equation ---
+    if (gens.length > 0) {
+      net.freqPrev = net.freq;
+      let totalInertiaEnergy = 0;
+      for (const gen of gens) totalInertiaEnergy += (gen.inertia || 5) * (gen.rating || 100);
+      let dfdt = 0;
+      if (totalInertiaEnergy > 0) dfdt = (imbalance * f0) / (2 * totalInertiaEnergy);
+      subFreqRef.value = Math.max(45, Math.min(55, subFreq + dfdt * physicsDt));
+    } else if (storages.length > 0) {
+      net.freqPrev = net.freq;
+      const stoInertia = storages.reduce((s, st) => s + ((st.dischargeRate || 500) * 3), 0);
+      let dfdt = stoInertia > 0 ? (imbalance * f0) / (2 * stoInertia) : 0;
+      subFreqRef.value = Math.max(45, Math.min(55, subFreq + dfdt * physicsDt));
+    } else {
+      net.freqPrev = net.freq;
+      subFreqRef.value = Math.max(0, subFreq - 10 * physicsDt);
+    }
+
+    // --- Step 4: Generator frequency protection ---
+    for (const gen of allGens) {
+      if (gen.tripped) continue;
+      if (subFreqRef.value > 52 || subFreqRef.value < 48) {
+        gen.freqTimer = (gen.freqTimer || 0) + physicsDt;
+        if (gen.freqTimer >= 1) {
+          gen.tripped = true;
+          gen.mw = 0;
+          const cause = subFreqRef.value > 52 ? 'overspeed' : 'underfrequency';
+          sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'gen-trip', nodeId: gen.id, freq: subFreqRef.value, cause });
+        }
+      } else {
+        gen.freqTimer = 0;
+      }
+    }
+
+    // --- Step 4b: Storage frequency protection ---
+    for (const st of storages) {
+      if (st.tripped || st.mode === 'grid-forming') continue;
+      if (subFreqRef.value > 52 || subFreqRef.value < 48) {
+        st.freqTimer = (st.freqTimer || 0) + physicsDt;
+        if (st.freqTimer >= 1) {
+          st.tripped = true;
+          st.mwResponse = 0;
+          sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'storage-trip', nodeId: st.id, freq: subFreqRef.value, cause: subFreqRef.value > 52 ? 'overfrequency' : 'underfrequency' });
+        }
+      } else {
+        st.freqTimer = 0;
+      }
+    }
+
+    // --- Step 5: DC Power Flow ---
+    if (hasLoad) solveDCPowerFlow(net, state.nodes, state.connections);
+
+    // --- Step 6: Line Overload / trip logic ---
+    const tripCurve = [
+      { limit: 200, time: 0.5 },
+      { limit: 150, time: 1 },
+      { limit: 120, time: 5 },
+      { limit: 100, time: Infinity },
+    ];
+    const netConns = state.connections.filter(c =>
+      net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)
+    );
+    for (const c of netConns) {
+      if (c.tripped) continue;
+      const pct = c.loadingPct || 0;
+      if (pct > 100) {
+        let tripTime = 0;
+        for (const tc of tripCurve) {
+          if (pct >= tc.limit) { tripTime = tc.time; break; }
+        }
+        if (tripTime > 0) {
+          c.tripTimer = (c.tripTimer || 0) + physicsDt;
+          if (c.tripTimer >= tripTime) {
+            c.tripped = true;
+            c.tripTimer = tripTime;
+            sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'line-trip', lineId: c.id, loading: pct, flow: c.mw });
+          }
+        }
+      } else {
+        c.tripTimer = 0;
+      }
+    }
+
+    // --- Step 7: Under-Frequency Load Shedding (UFLS) ---
+    if (hasLoad) {
+      const hasGFStorage = storages.some(s => s.mode === 'grid-forming');
+      for (const load of loads) {
+        if (load.baseMw === undefined) load.baseMw = load.mw || 0;
+        const f = subFreqRef.value;
+        let targetShed = 0;
+        if (f < 48.0) targetShed = 0.50;
+        else if (f < 48.5) targetShed = 0.25;
+        else if (f < 49.0) targetShed = 0.10;
+        if (f < 49.5) {
+          load.shedPct = Math.max(load.shedPct || 0, targetShed);
+        } else if (!hasGFStorage) {
+          load.shedPct = 0; // only restore when no grid-forming storage running
+        }
+        load.mw = load.baseMw * (1 - (load.shedPct || 0));
+      }
+    }
+
+    // --- Step 7b: Blackout load shedding (grid-forming headroom) ---
+    if (hasLoad && !hasGen) {
+      const gfStorages = storages.filter(s => s.mode === 'grid-forming');
+      if (gfStorages.length > 0) {
+        const gfCapacity = gfStorages.reduce((s, st) => s + (st.dischargeRate || 500), 0);
+        const targetLoad = gfCapacity * 0.5;
+        const currentLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
+        if (currentLoad > targetLoad) {
+          const scale = targetLoad / currentLoad;
+          for (const load of loads) {
+            const newMw = (load.mw || 0) * scale;
+            load.shedPct = Math.max(load.shedPct || 0, 1 - (newMw / (load.baseMw || load.mw)));
+            load.mw = newMw;
+          }
+        }
+      }
+    }
+
+    // --- Step 8: AGC (gens) ---
+    const balancingGens = gens.filter(g => g.mode === 'balancing');
+    const freqErr = f0 - subFreqRef.value;
+    if (balancingGens.length > 0) {
+      const agcRateLimit = 5;
+      const maxDelta = agcRateLimit * physicsDt;
+      const totalHeadroom = balancingGens.reduce((s, g) => s + Math.max(0, (g.rating || 100) - (g.baselineContract || 0) - (g.fcrHeadroom || 10)), 0);
+      if (totalHeadroom > 0) {
+        const totalAgc = 50 * freqErr * physicsDt;
+        for (const gen of balancingGens) {
+          const upwardHeadroom = Math.max(0, (gen.rating || 100) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10));
+          const share = upwardHeadroom / totalHeadroom;
+          const agcDelta = totalAgc * share;
+          const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
+          if (Math.abs(clamped) > 0.0001) {
+            gen.agcOffset = (gen.agcOffset || 0) + clamped;
+            const minAgc = (gen.fcrHeadroom || 10) - (gen.baselineContract || 0);
+            const maxAgc = (gen.rating || 100) - (gen.baselineContract || 0);
+            gen.agcOffset = Math.max(minAgc, Math.min(maxAgc, gen.agcOffset));
+          }
+        }
+      }
+    }
+
+    // --- Step 8b: AGC (storage) ---
+    const balancingStorages = storages.filter(s => s.mode === 'balancing' && !s.energyNeutral && (s.dischargeRate || 500) > 0);
+    if (balancingStorages.length > 0) {
+      const agcRateLimit = 20;
+      const maxDelta = agcRateLimit * physicsDt;
+      const totalStorHeadroom = balancingStorages.reduce((s, st) => {
+        const bc = st.baselineContract || 0;
+        const dr = st.dischargeRate || 500;
+        const cr = st.chargeRate || 500;
+        return s + Math.max(0, dr - bc) + Math.max(0, bc + cr);
+      }, 0);
+      if (totalStorHeadroom > 0) {
+        const totalAgc = 100 * freqErr * physicsDt;
+        for (const st of balancingStorages) {
+          const bc = st.baselineContract || 0;
+          const dr = st.dischargeRate || 500;
+          const cr = st.chargeRate || 500;
+          const stHeadroom = Math.max(0, dr - bc) + Math.max(0, bc + cr);
+          const share = stHeadroom / totalStorHeadroom;
+          const agcDelta = totalAgc * share;
+          const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
+          if (Math.abs(clamped) > 0.0001) {
+            st.agcOffset = (st.agcOffset || 0) + clamped;
+            const maxStAgc = dr - bc - (st.fcrHeadroom || 10);
+            const minStAgc = -(cr + bc - (st.fcrHeadroom || 10));
+            st.agcOffset = Math.max(minStAgc, Math.min(maxStAgc, st.agcOffset));
+          }
+        }
+      }
+    }
+    }
+    // Sync network freq from sub-step ref at end of all physics sub-steps
+    net.freq = subFreqRef.value;
+  }
+  }
+
+  // Update global state.frequency for backward compat (first network's freq)
+  state.frequency = state.networks.length > 0 ? state.networks[0].freq : 50;
+
+  // --- Detect stranded loads (within-island components with load but no gen) ---
+  state.strandedLoadIds = new Set();
+  for (const net of state.networks) {
+    if (!state.strandedLoadIds) state.strandedLoadIds = new Set();
+    const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+    const activeConns = state.connections.filter(c =>
+      !c.tripped && net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)
+    );
+    const adj = {};
+    for (const n of netNodes) adj[n.id] = [];
+    for (const c of activeConns) { adj[c.sourceId].push(c.targetId); adj[c.targetId].push(c.sourceId); }
+    const visited = new Set();
+    for (const n of netNodes) {
+      if (visited.has(n.id) || (n.type !== 'generator' && n.type !== 'storage')) continue;
+      const q = [n.id]; visited.add(n.id);
+      while (q.length) {
+        const id = q.shift();
+        for (const nb of (adj[id] || [])) { if (!visited.has(nb)) { visited.add(nb); q.push(nb); } }
+      }
+    }
+    for (const n of netNodes) {
+      if (n.type === 'load' && !visited.has(n.id)) { state.strandedLoadIds.add(n.id); n.mw = 0; }
+    }
+  }
+
+  let changed = true;
+
+  // --- Step 7: Update open settings panels ---
+  for (const nodeId of Object.keys(openPanels)) {
+    const gen = state.nodes.find(n => n.id === nodeId && n.type === 'generator');
+    if (gen) {
+      const entry = openPanels[nodeId];
+      if (entry.outputEl) entry.outputEl.textContent = Math.round(gen.mw || 0) + ' MW';
+      if (entry.baselineSlider && entry.baselineVal) {
+        const d = gen.baselineContract || 0;
+        if (d > parseInt(entry.baselineSlider.max)) entry.baselineSlider.max = d;
+        entry.baselineSlider.value = d;
+        entry.baselineVal.textContent = Math.round(d) + ' MW';
+      }
+      if (entry.shutdownBtn) {
+        entry.shutdownBtn.textContent = gen.tripped ? '🔄 Restart' : '🛑 Shut Down';
+        entry.shutdownBtn.style.background = gen.tripped ? '#27ae60' : 'transparent';
+        entry.shutdownBtn.style.color = gen.tripped ? '#fff' : '#c0392b';
+      }
+    }
+    const st = state.nodes.find(n => n.id === nodeId && n.type === 'storage');
+    if (st) {
+      const entry = openPanels[nodeId];
+      if (entry.socEl) entry.socEl.textContent = (st.mw || 0).toFixed(2) + ' MWh';
+      if (entry.mwRespEl) entry.mwRespEl.textContent = (st.mwResponse || 0) >= 0
+        ? '+' + Math.round(st.mwResponse || 0) + ' MW'
+        : Math.round(st.mwResponse || 0) + ' MW';
+      if (entry.modeSelect) entry.modeSelect.value = st.mode || 'balancing';
+      if (entry.fcrGroup) entry.fcrGroup.style.display = (st.mode === 'balancing' || st.mode === 'fcr-only') ? '' : 'none';
+      if (entry.fixedGroup) entry.fixedGroup.style.display = (st.mode === 'fixed') ? '' : 'none';
+      if (entry.neutralGroup) entry.neutralGroup.style.display = st.mode === 'balancing' ? '' : 'none';
+      if (entry.fcrSlider && entry.fcrVal) {
+        entry.fcrSlider.value = st.fcrHeadroom || 10;
+        entry.fcrVal.textContent = Math.round(st.fcrHeadroom || 10) + ' MW';
+      }
+      if (entry.droopSlider && entry.droopVal) {
+        entry.droopSlider.value = (st.droop || 0.04) * 100;
+        entry.droopVal.textContent = Math.round((st.droop || 0.04) * 100) + '%';
+      }
+      if (entry.fixedSlider && entry.fixedVal) {
+        entry.fixedSlider.value = st.fixedTarget || 0;
+        entry.fixedVal.textContent = (st.fixedTarget || 0) >= 0
+          ? '+' + Math.round(st.fixedTarget || 0) + ' MW'
+          : Math.round(st.fixedTarget || 0) + ' MW';
+      }
+      if (entry.bcSlider && entry.bcVal) {
+        entry.bcSlider.value = st.baselineContract || 0;
+        entry.bcVal.textContent = (st.baselineContract || 0) >= 0
+          ? '+' + Math.round(st.baselineContract || 0) + ' MW'
+          : Math.round(st.baselineContract || 0) + ' MW';
+      }
+      if (entry.shutdownBtn) {
+        entry.shutdownBtn.textContent = st.tripped ? '🔄 Restart' : '🛑 Shut Down';
+        entry.shutdownBtn.style.background = st.tripped ? '#27ae60' : 'transparent';
+        entry.shutdownBtn.style.color = st.tripped ? '#fff' : '#c0392b';
+      }
+    }
+  }
+
+  // --- Step 5a: Update FCR / aFRR status badges ---
+  {
+    const fcrBadge = document.getElementById('fcr-badge');
+    const agcBadge = document.getElementById('agc-badge');
+    const allGens = state.nodes.filter(n => n.type === 'generator');
+    const fcrGens = allGens.filter(g => g.mode === 'balancing' || g.mode === 'fcr-only');
+    const fcrActive = fcrGens.some(g => {
+      const dev = (state.frequency - f0) / f0;
+      const govMod = -(1 / (g.droop || 0.04)) * dev * (g.rating || 100);
+      return Math.abs(govMod) > 0.5 && Math.abs(govMod) <= (g.fcrHeadroom || 10);
+    });
+    fcrBadge.className = 'status-badge ' + (fcrActive ? 'fcr-active' : 'fcr-inactive');
+    const balancingGens2 = allGens.filter(g => g.mode === 'balancing');
+    const agcActive = Math.abs(f0 - state.frequency) > 0.001 && balancingGens2.length > 0;
+    agcBadge.className = 'status-badge ' + (agcActive ? 'agc-active' : 'agc-inactive');
+  }
+
+  // --- Step 5b: Refresh stats panel ---
+  updateStatsPanel();
+
+  // --- Step 6: Time-series capture at 1/4 s intervals ---
+  sim.captureAccum += dt;
+  if (sim.captureAccum >= 0.25) {
+    sim.captureAccum -= 0.25;
+    const netFreqs = {};
+    for (const net of state.networks) netFreqs[net.id] = net.freq;
+    const entry = { t: sim.dataBuffer.length * 0.25, frequency: state.frequency, networks: netFreqs, nodes: {}, connections: {}, nodeNetworks: {} };
+    for (const node of state.nodes) {
+      entry.nodes[node.id] = { type: node.type, mw: node.mw || 0 };
+      if (node.type === 'generator') {
+        entry.nodes[node.id].baselineContract = node.baselineContract || 0;
+        entry.nodes[node.id].agcOffset = node.agcOffset || 0;
+        entry.nodes[node.id].mode = node.mode || 'balancing';
+        entry.nodes[node.id].rating = node.rating || 100;
+        entry.nodes[node.id].droop = node.droop || 0.04;
+        entry.nodes[node.id].fcrHeadroom = node.fcrHeadroom || 10;
+        entry.nodes[node.id].bidPrice = node.bidPrice || 50;
+        entry.nodes[node.id].bidQty = node.bidQty || node.rating || 100;
+        entry.nodes[node.id].turbineTimeConstant = node.turbineTimeConstant || 1;
+      }
+      if (node.type === 'storage') {
+        entry.nodes[node.id].mwResponse = node.mwResponse || 0;
+        entry.nodes[node.id].mode = node.mode || 'balancing';
+        entry.nodes[node.id].maxCapacity = node.maxCapacity || 100;
+        entry.nodes[node.id].baselineContract = node.baselineContract || 0;
+        entry.nodes[node.id].agcOffset = node.agcOffset || 0;
+      }
+    }
+    // Capture connection states
+    for (const c of state.connections) {
+      entry.connections[c.id] = {
+        mw: c.mw || 0,
+        loadingPct: c.loadingPct || 0,
+        tripped: !!c.tripped,
+        tripTimer: c.tripTimer || 0,
+        sourceId: c.sourceId,
+        targetId: c.targetId,
+        reactance: c.reactance,
+        thermalLimit: c.thermalLimit,
+      };
+    }
+    // Capture per-node island membership
+    for (const net of state.networks) {
+      for (const id of net.nodeIds) entry.nodeNetworks[id] = net.id;
+    }
+    sim.dataBuffer.push(entry);
+  }
+
+  if (changed) draw();
+  if (state.freqChartVisible) drawFreqChart();
+}
+
+// ─── Simulation Control ────────────────────────────────────────────────
+
+export function startSim() {
+  if (sim.running) return;
+  sim.running = true;
+  sim.interval = setInterval(simTick, 1000 / sim.tickHz);
+}
+
+export function stopSim() {
+  sim.running = false;
+  if (sim.interval) { clearInterval(sim.interval); sim.interval = null; }
+}
+
+export function restartSim() {
+  stopSim();
+  sim.dataBuffer = [];
+  sim.captureAccum = 0;
+  sim.events = [];
+  sim.simTime = 0;
+  sim.lastMarketPat = 0;
+  // Reset load shedding first so loads have MW values for market dispatch
+  for (const load of state.nodes.filter(n => n.type === 'load')) {
+    load.shedPct = 0;
+    if (load.baseMw) load.mw = load.baseMw;
+  }
+  // First dispatch — sets every gen's baselineContract from merit order
+  dispatchMeritOrder();
+  for (const gen of state.nodes.filter(n => n.type === 'generator')) {
+    gen.agcOffset = 0;
+    gen.mw = gen.baselineContract || 0;
+    gen.tripped = false;
+    gen.freqTimer = 0;
+  }
+  for (const st of state.nodes.filter(n => n.type === 'storage')) {
+    st.baselineContract = 0;
+    st.mwResponse = st.baselineContract || 0;
+    st.agcOffset = 0;
+    st.freqRestore = 0;
+    st.tripped = false;
+  }
+  // Reset tripped lines
+  for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
+  state.frequency = 50;
+  state.networks = findNetworks();
+  for (const net of state.networks) { net.freq = 50; net.freqPrev = 50; }
+  draw();
+  updateControls();
+  updateStatsPanel();
+}
+
+// ─── Grid Balancing ────────────────────────────────────────────────────
+
+export function balanceGrid() {
+  // Balance supply with demand per island.
+  // Each island's flexible generators share that island's load proportionally by rating.
+  const nets = findNetworks();
+  if (!nets.length) return;
+
+  // Reset all gen baselines, trips, and load shedding
+  for (const gen of state.nodes.filter(n => n.type === 'generator')) {
+    gen.baselineContract = 0;
+    gen.agcOffset = 0;
+    gen.tripped = false;
+    gen.freqTimer = 0;
+  }
+  for (const st of state.nodes.filter(n => n.type === 'storage')) {
+    st.baselineContract = 0;
+    st.mwResponse = 0;
+    st.agcOffset = 0;
+    st.freqRestore = 0;
+    st.tripped = false;
+  }
+  for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
+  for (const load of state.nodes.filter(n => n.type === 'load')) {
+    load.shedPct = 0;
+    if (load.baseMw) load.mw = load.baseMw;
+  }
+  // Reset island frequencies to nominal so governor doesn't override balanced dispatch
+  for (const net of nets) {
+    net.freq = 50;
+    net.freqPrev = 50;
+  }
+
+  for (const net of nets) {
+    const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+    const loads = netNodes.filter(n => n.type === 'load');
+    const gens = netNodes.filter(n => n.type === 'generator');
+    const storages = netNodes.filter(n => n.type === 'storage');
+    if (!loads.length) continue;
+
+    const totalDemand = loads.reduce((sum, n) => sum + (n.mw || 0), 0);
+    const fixedGens = gens.filter(g => g.mode === 'fixed');
+    const flexGens = gens.filter(g => g.mode !== 'fixed');
+    const notFixedStor = storages.filter(s => s.mode !== 'fixed');
+
+    const fixedSupply = fixedGens.reduce((sum, g) => sum + Math.min(g.dispatchTarget || 0, g.rating || Infinity), 0);
+    let remaining = totalDemand - fixedSupply;
+
+    // Distribute proportionally across flexible gens AND storage
+    // Exclude storage with insufficient SoC (can't discharge what it doesn't have)
+    const dispatchableStor = notFixedStor.filter(s => s.mw === undefined || s.mw > 0);
+    const flexGenRating = flexGens.reduce((sum, g) => sum + (g.rating || 100), 0);
+    const flexStorRate = dispatchableStor.reduce((sum, s) => sum + (s.dischargeRate || 50), 0);
+    const totalFlex = flexGenRating + flexStorRate;
+
+    if (totalFlex > 0 && remaining > 0) {
+      for (const gen of flexGens) {
+        const share = (gen.rating || 100) / totalFlex;
+        gen.baselineContract = Math.min(Math.round(remaining * share * 10) / 10, gen.rating || Infinity);
+        gen.mw = gen.baselineContract;
+      }
+      for (const st of dispatchableStor) {
+        const share = (st.dischargeRate || 50) / totalFlex;
+        st.baselineContract = Math.min(Math.round(remaining * share * 10) / 10, st.dischargeRate || 50);
+        if (st.mw !== undefined && st.mw < st.baselineContract * 0.05) st.baselineContract = 0;
+        st.mwResponse = st.baselineContract;
+      }
+      // Redistribute any shortfall from zeroed storage to flexible gens
+      const totalAllocated = flexGens.reduce((s, g) => s + (g.baselineContract || 0), 0) +
+        dispatchableStor.reduce((s, st) => s + (st.baselineContract || 0), 0);
+      const shortfall = remaining - totalAllocated;
+      if (shortfall > 1 && flexGens.length > 0) {
+        for (const gen of flexGens) {
+          const addShare = (gen.rating || 100) / flexGenRating;
+          gen.baselineContract = Math.min((gen.baselineContract || 0) + shortfall * addShare, gen.rating || Infinity);
+          gen.mw = gen.baselineContract;
+        }
+      }
+    } else if (totalFlex > 0 && remaining < 0) {
+      // Surplus: charge storage to absorb excess (gens can't absorb, only curtail)
+      for (const gen of flexGens) gen.baselineContract = 0;
+      const surplus = -remaining;
+      const totalRate = notFixedStor.reduce((s, st) => s + (st.chargeRate || 50), 0);
+      for (const st of notFixedStor) {
+        const cr = st.chargeRate || 50;
+        st.baselineContract = -Math.min(Math.round(surplus * (cr / totalRate) * 10) / 10, cr);
+        st.mwResponse = st.baselineContract;
+      }
+    }
+  }
+
+  // Update the UI
+  recomputeNetworks();
+  persist();
+  draw();
+  updateControls();
+  updateStatsPanel();
+
+  // Update open settings panels for storage dispatch slider
+  for (const nodeId of Object.keys(openPanels)) {
+    const entry = openPanels[nodeId];
+    const st = state.nodes.find(n => n.id === nodeId && n.type === 'storage');
+    if (st && entry.bcSlider && entry.bcVal) {
+      entry.bcSlider.value = st.baselineContract || 0;
+      entry.bcVal.textContent = (st.baselineContract || 0) >= 0
+        ? '+' + Math.round(st.baselineContract || 0) + ' MW'
+        : Math.round(st.baselineContract || 0) + ' MW';
+    }
+  }
+}
