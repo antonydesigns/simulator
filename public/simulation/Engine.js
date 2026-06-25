@@ -202,9 +202,10 @@ export class SimulationEngine {
               }
               const genLocalPct = Math.min(1, (rampProgress - genStartPct) / (1 / bs.genOrder.length));
               const share = (gen.rating || 100) / totalRating;
-              gen.baselineContract = 0;
+              const rampMw = Math.round(share * totalLoad * genLocalPct);
+              gen.baselineContract = rampMw;
               gen.agcOffset = 0;
-              gen.mw = Math.round(share * totalLoad * genLocalPct);
+              gen.mw = rampMw;
             }
           }
 
