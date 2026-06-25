@@ -136,7 +136,11 @@ export class SimulationEngine {
         net.freq = f0; continue;
       }
       if (!hasGen && !hasEffectiveStor && hasLoad) {
-        for (const load of loads) { load.mw = 0; state.strandedLoadIds.add(load.id); }
+        for (const load of loads) {
+          load._preBlackoutBaseMw = load._preBlackoutBaseMw || load.baseMw || load.mw || 0;
+          load.mw = 0;
+          state.strandedLoadIds.add(load.id);
+        }
         for (const c of state.connections) if (net.nodeIds.has(c.sourceId) && net.nodeIds.has(c.targetId)) { c.mw = 0; c.loadingPct = 0; }
         net.freq = f0; continue;
       }
@@ -154,6 +158,93 @@ export class SimulationEngine {
   
       // Note: stranded loads within mixed islands are zeroed after the stranded detection step, below
   
+
+
+      // --- Black Start logic ---
+      if (net.blackStart) {
+        const bs = net.blackStart;
+        const bsDt = dt;
+        bs.progress = Math.min(1, bs.progress + (bsDt / bs.duration));
+
+        if (bs.phase === 'gfs-only') {
+          if (bs.progress >= 0.15) {
+            bs.phase = 'gen-restart';
+            const islandGens = allGens.filter(g => g.type === 'generator');
+            bs.genOrder = islandGens
+              .map(g => ({ id: g.id, tc: g.turbineTimeConstant || 1 }))
+              .sort((a, b) => a.tc - b.tc);
+            bs.genRampStartProgress = 0.15;
+          }
+        }
+
+        if (bs.phase === 'gen-restart') {
+          const rampProgress = Math.min(1, (bs.progress - 0.15) / 0.85);
+          const totalRating = allGens.reduce((s, g) => s + (g.rating || 100), 0) || 1;
+
+          for (const load of loads) {
+            const baseMw = load._preBlackoutBaseMw || load.baseMw || load.mw || 0;
+            load.mw = Math.round(baseMw * rampProgress);
+            load.shedPct = Math.max(0, 1 - rampProgress);
+          }
+
+          const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
+          for (let i = 0; i < bs.genOrder.length; i++) {
+            const ge = bs.genOrder[i];
+            const gen = allGens.find(g => g.id === ge.id);
+            if (!gen) continue;
+            const genStartPct = i / bs.genOrder.length;
+            if (rampProgress >= genStartPct) {
+              if (gen.tripped) {
+                gen.tripped = false;
+                gen.mw = 0;
+                gen.freqTimer = 0;
+                gen.agcOffset = 0;
+              }
+              const genLocalPct = Math.min(1, (rampProgress - genStartPct) / (1 / bs.genOrder.length));
+              const share = (gen.rating || 100) / totalRating;
+              gen.baselineContract = 0;
+              gen.agcOffset = 0;
+              gen.mw = Math.round(share * totalLoad * genLocalPct);
+            }
+          }
+
+          for (const gen of allGens) {
+            if (gen.tripped) continue;
+            if (gen._preBlackStartMode === undefined) {
+              gen._preBlackStartMode = gen.mode;
+            }
+            gen.mode = 'fixed';
+          }
+
+          if (rampProgress >= 1.0) {
+            bs.phase = 'handover';
+            bs.handoverTimer = 0;
+          }
+        }
+
+        if (bs.phase === 'handover') {
+          bs.handoverTimer += dt;
+          if (bs.handoverTimer >= 2.0) {
+            for (const gen of allGens) {
+              if (gen._preBlackStartMode) {
+                gen.mode = gen._preBlackStartMode;
+                delete gen._preBlackStartMode;
+              }
+              gen.baselineContract = gen.mw || 0;
+              gen.agcOffset = 0;
+            }
+            for (const load of loads) {
+              load.shedPct = 0;
+              delete load._preBlackoutBaseMw;
+            }
+            sim.lastMarketPat = -900;
+            state.blackStartNets.delete(net.id);
+            delete net.blackStart;
+            sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'blackstart-complete', netId: net.id });
+          }
+        }
+      }
+
       // --- Physics sub-step loop (smooth at any sim speed) ---
       {
       const physicsSteps = Math.max(1, Math.ceil(dt / 0.05));
@@ -657,6 +748,16 @@ export class SimulationEngine {
     state.frequency = 50;
     state.networks = this.findNetworks();
     for (const net of state.networks) { net.freq = 50; net.freqPrev = 50; }
+
+    // Clear black start state
+    state.blackStartNets = new Set();
+    for (const net of state.networks) {
+      delete net.blackStart;
+    }
+    for (const node of state.nodes) {
+      if (node.type === 'load') delete node._preBlackoutBaseMw;
+      if (node.type === 'generator') delete node._preBlackStartMode;
+    }
     this.callbacks.draw();
     this.callbacks.updateControls();
     this.callbacks.updateStatsPanel();

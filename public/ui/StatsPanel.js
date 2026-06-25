@@ -45,6 +45,31 @@ export class StatsPanel {
         html += '<option value="' + net.id + '"' + (this.store.selectedNetworkId === net.id ? ' selected' : '') + '>' + label + '</option>';
       }
       html += '</select>';
+
+      // Black Start buttons + progress
+      for (const net of nets) {
+        const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+        const gfStorages = netNodes.filter(n => n.type === 'storage' && n.mode === 'grid-forming' && !n.tripped && (n.mw || 0) > 0.5);
+        const anyOnlineSource = netNodes.filter(n => (n.type === 'generator' || n.type === 'storage') && !n.tripped);
+        const isEligible = gfStorages.length > 0 && anyOnlineSource.length === gfStorages.length && !net.blackStart;
+        if (isEligible) {
+          html += '<button class="blackstart-btn" data-net-id="' + net.id + '" style="width:100%;padding:8px;margin-top:6px;background:#e67e22;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:13px">';
+          html += '&#9889; Black Start ' + net.id;
+          html += '</button>';
+        }
+        if (net.blackStart) {
+          const bs = net.blackStart;
+          const pct = Math.round(bs.progress * 100);
+          const phaseLabels = { 'gfs-only': 'Energizing bus...', 'gen-restart': 'Restoring gens & loads...', 'handover': 'Handover to market...' };
+          const label = phaseLabels[bs.phase] || 'Restoring...';
+          html += '<div class="blackstart-progress" style="margin-top:6px;padding:8px;background:#fef5e7;border-radius:4px;text-align:center">';
+          html += '<div style="font-size:12px;color:#e67e22;font-weight:bold;margin-bottom:4px">' + label + '</div>';
+          html += '<div style="height:8px;background:#f0e6d3;border-radius:4px;overflow:hidden">';
+          html += '<div style="height:100%;width:' + pct + '%;background:#e67e22;border-radius:4px;transition:width 0.3s"></div></div>';
+          html += '<div style="font-size:11px;color:#888;margin-top:2px">' + pct + '%</div></div>';
+        }
+      }
+
       html += '</div>';
     }
 
@@ -153,6 +178,26 @@ export class StatsPanel {
     // Wire up event listeners
     const sel = document.getElementById('island-select');
     if (sel) sel.addEventListener('change', () => { this.store.selectedNetworkId = sel.value; this.update(); });
+
+    // Black start button
+    body.querySelectorAll('.blackstart-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const netId = btn.dataset.netId;
+        const net = state.networks.find(n => n.id === netId);
+        if (!net || net.blackStart) return;
+        const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
+        const gfStorages = netNodes.filter(n => n.type === 'storage' && n.mode === 'grid-forming' && !n.tripped && (n.mw || 0) > 0.5);
+        if (gfStorages.length === 0) return;
+        for (const load of netNodes.filter(n => n.type === 'load')) {
+          load._preBlackoutBaseMw = load._preBlackoutBaseMw || load.baseMw || load.mw || 0;
+        }
+        net.blackStart = { progress: 0, phase: 'gfs-only', duration: 15, genOrder: [], currentGenIdx: 0, genRampStartProgress: 0 };
+        for (const st of gfStorages) {
+          if (st.tripped) { st.tripped = false; st.mwResponse = 0; }
+        }
+        state.blackStartNets.add(netId);
+      });
+    });
 
     // Wire up toggle buttons
     body.querySelectorAll('[data-toggle]').forEach(el => {

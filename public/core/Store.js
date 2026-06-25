@@ -20,6 +20,7 @@ export class Store {
       clipboard: null,
       lineClipboard: null,
       statsBreakdownExpanded: new Set(),
+      blackStartNets: new Set(),
     };
 
     // ─── Island Colors ──────────────────────────────────────────────

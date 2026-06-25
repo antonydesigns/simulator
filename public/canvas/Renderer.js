@@ -565,6 +565,24 @@ export class Renderer {
     ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
     ctx.textAlign = 'right';
     ctx.fillText(freqLabel, tl.x + w - 10, tl.y + headerH / 2);
+
+    // Black start indicator
+    if (net.blackStart) {
+      const pct = Math.round((net.blackStart.progress || 0) * 100);
+      ctx.fillStyle = '#e67e22';
+      ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('⚡ BLACK START ' + pct + '%', tl.x + w / 2, tl.y + headerH + 16);
+    }
+
+    // Black start indicator
+    if (net.blackStart) {
+      const pct = Math.round((net.blackStart.progress || 0) * 100);
+      ctx.fillStyle = '#e67e22';
+      ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('⚡ BLACK START ' + pct + '%', tl.x + w / 2, tl.y + headerH + 16);
+    }
   }
 }
 
