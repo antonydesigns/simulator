@@ -92,6 +92,9 @@ export class Store {
     this.statsPanelVisible = false;
     this.selectedNetworkId = "all";
     this.freqChartVisible = false;
+    this.freqViewLeft = 0;    // 0 = auto (window follows latest)
+    this.freqViewRight = 0;   // 0 = auto, >0 = number of data points to show
+    this.freqYMin = 0;        // 0 = auto-scale to visible data
     this.meritChartVisible = false;
     this.dragPanel = null;
     this.dragOff = { x: 0, y: 0 };

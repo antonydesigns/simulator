@@ -2,6 +2,7 @@
 
 export class Renderer {
   constructor(store) {
+    this.engine = null;
     this.store = store;
   }
 
@@ -395,7 +396,7 @@ export class Renderer {
   drawLoadCurvePreview(previewCanvas, node) {
     const { state, sim, ptr, ctx, ISLAND_COLORS, GRID_SIZE, NODE_RADIUS, JUNCTION_RADIUS } = this.store;
   
-  if (!canvas || !node) return;
+  if (!previewCanvas || !node) return;
   const w = 320, h = 80;
   const cx = previewCanvas.getContext('2d');
   const pad = { top: 8, bottom: 15, left: 28, right: 8 };
@@ -429,7 +430,7 @@ export class Renderer {
   for (let i = 0; i <= daySteps; i++) {
     const hour = (i / daySteps) * 24;
     const todSec = (hour / 24) * day;
-    const mult = engine.demandCurve(todSec);
+    const mult = this.engine.demandCurve(todSec);
     const mw = minMw + range * mult;
     const x = pad.left + (i / daySteps) * pw;
     const y = pad.top + ph - ((mw - minMw) / range) * ph;
@@ -443,7 +444,7 @@ export class Renderer {
   for (let i = 0; i <= daySteps; i++) {
     const hour = (i / daySteps) * 24;
     const todSec = (hour / 24) * day + 5 * day;
-    const mult = engine.demandCurve(todSec);
+    const mult = this.engine.demandCurve(todSec);
     const mw = minMw + range * mult;
     const x = pad.left + (i / daySteps) * pw;
     const y = pad.top + ph - ((mw - minMw) / range) * ph;
@@ -456,7 +457,7 @@ export class Renderer {
   if (sim.simTime > 0) {
     const patSec = sim.simTime * 720;
     const curHour = (((patSec % day) / day) * 24 + 24) % 24;
-    const curMult = engine.demandCurve(patSec);
+    const curMult = this.engine.demandCurve(patSec);
     const curMw = minMw + range * curMult;
     const cx2 = pad.left + (curHour / 24) * pw;
     const cy = pad.top + ph - ((curMw - minMw) / range) * ph;

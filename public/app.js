@@ -6,19 +6,23 @@ import { StatsPanel } from "./ui/StatsPanel.js";
 import { Persister } from "./storage/Persister.js";
 import { SettingsPanel } from "./ui/SettingsPanel.js";
 import { Interactions } from "./ui/Interactions.js";
+import { BalanceModal } from "./ui/BalanceModal.js";
 
 const store = new Store();
 const renderer = new Renderer(store);
-const controls = new Controls(store);
 const statsPanel = new StatsPanel(store);
 const engine = new SimulationEngine(store, {
-  draw: renderer.draw.bind(renderer),
-  updateControls: controls.updateControls.bind(controls),
+  draw: () => { renderer.draw(); settingsPanel.refreshNodePanels(); },
+  updateControls: () => {},
   updateStatsPanel: statsPanel.update.bind(statsPanel),
-    drawFreqChart: () => statsPanel.drawFreqChart(),
-    drawMeritOrderChart: () => statsPanel.drawMeritOrderChart(),
+  drawFreqChart: () => statsPanel.drawFreqChart(),
+  drawMeritOrderChart: () => statsPanel.drawMeritOrderChart(),
 });
+renderer.engine = engine;
 const persister = new Persister(store, engine);
+const balanceModal = new BalanceModal(store, engine, persister, renderer, statsPanel);
+const controls = new Controls(store, engine, persister, statsPanel, balanceModal);
+engine.callbacks.updateControls = controls.updateControls.bind(controls);
 engine.onPersist = () => persister.persist();
 const settingsPanel = new SettingsPanel(
   store,
@@ -41,6 +45,7 @@ const interactions = new Interactions(
 async function init() {
   await persister.load();
   engine.balanceGrid();
+
   renderer.resizeCanvas();
   renderer.draw();
   controls.updateControls();

@@ -206,7 +206,7 @@ export class SettingsPanel {
         for (const row of marketRows) {
           row.style.display = modeSelect.value === 'fixed' ? 'none' : '';
         }
-        persister.this.persister.persist();
+        this.persister.persist();
       });
     }
 
@@ -216,7 +216,7 @@ export class SettingsPanel {
       genShutdownBtn.addEventListener('click', () => {
         node.tripped = !node.tripped;
         if (node.tripped) node.mw = 0;
-        persister.this.persister.persist();
+        this.persister.persist();
         genShutdownBtn.textContent = node.tripped ? '🔄 Restart' : '🛑 Shut Down';
         genShutdownBtn.style.background = node.tripped ? '#27ae60' : 'transparent';
         genShutdownBtn.style.color = node.tripped ? '#fff' : '#c0392b';
@@ -272,7 +272,7 @@ export class SettingsPanel {
         </div>
         <div class="settings-row sep-top"><button class="storage-shutdown-btn" style="width:100%;padding:6px 0;border:1px solid #c0392b;border-radius:4px;cursor:pointer;font-size:13px;background:${node.tripped ? '#27ae60' : 'transparent'};color:${node.tripped ? '#fff' : '#c0392b'}">${node.tripped ? '🔄 Restart' : '🛑 Shut Down'}</button></div>
       </div>
-      <div class="settings-resize-handle"></div>`;
+            <div class="settings-resize-handle"></div>`;
 
     entry.socEl = panel.querySelector('.storage-soc');
     entry.mwRespEl = panel.querySelector('.storage-mw-response');
@@ -302,7 +302,7 @@ export class SettingsPanel {
     const neutralCb = panel.querySelector('.energy-neutral-checkbox');
     neutralCb.addEventListener('change', () => {
       node.energyNeutral = neutralCb.checked;
-      persister.this.persister.persist();
+      this.persister.persist();
     });
 
     entry.modeSelect.addEventListener('change', () => {
@@ -310,7 +310,7 @@ export class SettingsPanel {
       entry.fcrGroup.style.display = (node.mode === 'balancing' || node.mode === 'fcr-only' || node.mode === 'grid-forming') ? '' : 'none';
       entry.fixedGroup.style.display = node.mode === 'fixed' ? '' : 'none';
       if (entry.neutralGroup) entry.neutralGroup.style.display = node.mode === 'balancing' ? '' : 'none';
-      persister.this.persister.persist();
+      this.persister.persist();
     });
 
     // Storage shutdown button
@@ -319,7 +319,7 @@ export class SettingsPanel {
       stShutdownBtn.addEventListener('click', () => {
         node.tripped = !node.tripped;
         if (node.tripped) { node.mwResponse = 0; node.mw = node.mw || 0; }
-        persister.this.persister.persist();
+        this.persister.persist();
         stShutdownBtn.textContent = node.tripped ? '🔄 Restart' : '🛑 Shut Down';
         stShutdownBtn.style.background = node.tripped ? '#27ae60' : 'transparent';
         stShutdownBtn.style.color = node.tripped ? '#fff' : '#c0392b';
@@ -395,6 +395,11 @@ export class SettingsPanel {
           <div class="settings-slider-group"><input type="range" class="mw-slider" min="0" max="500" step="10" value="${node.mw || 10}"><span class="mw-value">${node.mw || 10}</span></div>
         </div>
       </div>
+      <div class="settings-row shed-row">
+          <label class="settings-label">UFLS Shed</label>
+          <span class="shed-status">SHD ${Math.round((node.shedPct || 0) * 100)}%</span>
+          <button class="shed-restore-btn">Restore</button>
+        </div>
       <div class="settings-resize-handle"></div>`;
 
     const slider = panel.querySelector('.mw-slider'), valEl = panel.querySelector('.mw-value');
@@ -409,7 +414,7 @@ export class SettingsPanel {
       const manualRow = panel.querySelector('.manual-row');
       if (manualRow) manualRow.style.display = noiseToggle.checked ? 'none' : '';
       this.renderer.draw();
-      persister.this.persister.persist();
+      this.persister.persist();
     });
 
     const noiseMinSlider = panel.querySelector('.noise-min-slider');
@@ -419,7 +424,7 @@ export class SettingsPanel {
         const v = parseInt(noiseMinSlider.value, 10);
         noiseMinVal.textContent = v;
         node.noiseMin = v;
-        drawLoadCurvePreview(panel.querySelector('.demand-preview'), node);
+        this.renderer.drawLoadCurvePreview(panel.querySelector('.demand-preview'), node);
         this.renderer.draw();
       });
       noiseMinSlider.addEventListener('change', () => this.persister.persist());
@@ -432,7 +437,7 @@ export class SettingsPanel {
         const v = parseInt(noiseMaxSlider.value, 10);
         noiseMaxVal.textContent = v;
         node.noiseMax = v;
-        drawLoadCurvePreview(panel.querySelector('.demand-preview'), node);
+        this.renderer.drawLoadCurvePreview(panel.querySelector('.demand-preview'), node);
         this.renderer.draw();
       });
       noiseMaxSlider.addEventListener('change', () => this.persister.persist());
@@ -451,14 +456,33 @@ export class SettingsPanel {
 
     // Draw the preview canvas on open
     const previewCanvas = panel.querySelector('.demand-preview');
-    if (previewCanvas) drawLoadCurvePreview(previewCanvas, node);
+    if (previewCanvas) this.renderer.drawLoadCurvePreview(previewCanvas, node);
+
+    // Load shed restore
+    const shedRow = panel.querySelector('.shed-row');
+    // Hide shed row initially if no active shedding
+    if (shedRow) shedRow.style.display = (node.shedPct || 0) > 0 ? '' : 'none';
+    const shedRestoreBtn = panel.querySelector('.shed-restore-btn');
+    if (shedRestoreBtn) {
+      shedRestoreBtn.addEventListener('click', () => {
+        node.shedPct = 0;
+        node.shedTimer = 0;
+        if (!node.noiseEnabled) {
+          node.mw = node.baseMw || node.mw || 10;
+        }
+        if (shedRow) shedRow.style.display = 'none';
+        // Don't re-balance — let FCR/AGC handle the restored load naturally
+        this.renderer.draw();
+        this.persister.persist();
+      });
+    }
   }
 
   const count = Object.keys(openPanels).length;
   panel.style.left = (120 + count * 28) + 'px'; panel.style.top = (80 + count * 28) + 'px';
   document.body.appendChild(panel);
 
-  panel.querySelector('[data-action="close-settings"]').addEventListener('click', (e) => { e.stopPropagation(); closeSettings(nodeId); });
+  panel.querySelector('[data-action="close-settings"]').addEventListener('click', (e) => { e.stopPropagation(); this.closeSettings(nodeId); });
 
   panel.addEventListener('mousedown', (e) => {
     if (e.target.closest('.settings-header')) { this.store.dragPanel = panel; this.store.dragOff = { x: e.clientX - panel.offsetLeft, y: e.clientY - panel.offsetTop }; panel.style.zIndex = Date.now(); e.preventDefault(); }
@@ -467,6 +491,18 @@ export class SettingsPanel {
 
   openPanels[nodeId] = entry;
 }
+
+  refreshNodePanels() {
+    const { openPanels } = this.store;
+    for (const [nodeId, entry] of Object.entries(openPanels)) {
+      const node = this.store.state.nodes.find(n => n.id === nodeId);
+      if (!node || node.type !== 'load') continue;
+      const shedRow = entry.panel.querySelector('.shed-row');
+      if (!shedRow) continue;
+      const isShed = (node.shedPct || 0) > 0;
+      shedRow.style.display = isShed ? '' : 'none';
+    }
+  }
 
   closeSettings(nodeId) {
     const { state, sim, openPanels, ISLAND_COLORS } = this.store;

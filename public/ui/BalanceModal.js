@@ -85,18 +85,12 @@ export class BalanceModal {
       const self = this;
 
       function updateSummary() {
-        function isLocked(e) { return e.lockBtn.classList.contains('balance-locked'); }
+        function isLocked(e) { return e.lockBtn && e.lockBtn.classList.contains('balance-locked'); }
         let totalDemand = 0, fixedSupply = 0, lockedSupply = 0;
         for (const e of islandState.loadEntries) totalDemand += Number(e.slider.value);
         for (const e of islandState.fixedEntries) {
-          if (e.node.type === 'generator') fixedSupply += e.value;
-          else fixedSupply += e.value;
-        }
-        for (const e of islandState.flexGenEntries) {
-          if (isLocked(e)) lockedSupply += Number(e.slider.value);
-        }
-        for (const e of islandState.flexStorEntries) {
-          if (isLocked(e)) lockedSupply += Number(e.slider.value);
+          if (e.slider && isLocked(e)) lockedSupply += Number(e.slider.value);
+          else fixedSupply += (e.value || 0);
         }
         const remaining = totalDemand - fixedSupply - lockedSupply;
         const totalDispatched = lockedSupply + fixedSupply;
@@ -139,42 +133,19 @@ export class BalanceModal {
         islandState.loadEntries.push({ node: load, slider, valSpan });
       }
 
-      // Fixed gens
+      // Fixed gens — dispatched MW IS a control (slider + lock)
       for (const gen of gens.filter(g => g.mode === 'fixed')) {
-        const val = Math.min(gen.dispatchTarget || 0, gen.rating || Infinity);
-        const row = document.createElement('div');
-        row.className = 'balance-node-row balance-fixed-row';
-        row.innerHTML = '<span class="balance-node-label">🔒 ' + (gen.shortId || gen.id.slice(-5)) + ' <span class="balance-rating">(' + (gen.rating || 100) + ' MVA)</span></span>' +
-          '<div class="balance-node-controls"><span style="color:#888;font-size:12px">fixed @ ' + Math.round(val) + ' MW</span></div>';
-        section.appendChild(row);
-        islandState.fixedEntries.push({ node: gen, value: val });
-      }
-
-      // Fixed storage
-      for (const st of storages.filter(s => s.mode === 'fixed')) {
-        const val = (st.baselineContract || 0) + (st.fixedTarget || 0);
-        const row = document.createElement('div');
-        row.className = 'balance-node-row balance-fixed-row';
-        row.innerHTML = '<span class="balance-node-label">🔒 ' + (st.shortId || st.id.slice(-5)) + ' <span class="balance-rating">(' + (st.dischargeRate || 50) + ' MW)</span></span>' +
-          '<div class="balance-node-controls"><span style="color:#888;font-size:12px">fixed @ ' + (val >= 0 ? '+' : '') + Math.round(val) + ' MW</span></div>';
-        section.appendChild(row);
-        islandState.fixedEntries.push({ node: st, value: val });
-      }
-
-      // Flex gens
-      const flexGens = gens.filter(g => g.mode !== 'fixed');
-      for (const gen of flexGens) {
         const row = document.createElement('div');
         row.className = 'balance-node-row';
         const label = document.createElement('span');
         label.className = 'balance-node-label';
-        label.innerHTML = (gen.shortId || gen.id.slice(-5)) + ' <span class="balance-rating">(' + (gen.rating || 100) + ' MVA)</span>';
+        label.innerHTML = '🔒 ' + (gen.shortId || gen.id.slice(-5)) + ' <span class="balance-rating">(' + (gen.rating || 100) + ' MVA)</span>';
         const ctrlDiv = document.createElement('div');
         ctrlDiv.className = 'balance-node-controls';
         const lockBtn = document.createElement('button');
-        lockBtn.className = 'balance-lock-btn';
-        lockBtn.textContent = '🔓';
-        let locked = false;
+        lockBtn.className = 'balance-lock-btn balance-locked';
+        lockBtn.textContent = '🔒';
+        let locked = true;
         lockBtn.addEventListener('click', () => {
           locked = !locked;
           lockBtn.textContent = locked ? '🔒' : '🔓';
@@ -191,9 +162,9 @@ export class BalanceModal {
         slider.value = clamp(origBaselines[gen.id] || 0, 0, maxVal);
         const valSpan = document.createElement('span');
         valSpan.className = 'balance-node-value';
-        valSpan.textContent = (Number(slider.value) >= 0 ? '+' : '') + Math.round(slider.value) + ' MW';
+        valSpan.textContent = Math.round(slider.value) + ' MW';
         slider.addEventListener('input', () => {
-          valSpan.textContent = (Number(slider.value) >= 0 ? '+' : '') + Math.round(slider.value) + ' MW';
+          valSpan.textContent = Math.round(slider.value) + ' MW';
         });
         ctrlDiv.appendChild(lockBtn);
         ctrlDiv.appendChild(slider);
@@ -201,12 +172,11 @@ export class BalanceModal {
         row.appendChild(label);
         row.appendChild(ctrlDiv);
         section.appendChild(row);
-        islandState.flexGenEntries.push({ node: gen, slider, valSpan, lockBtn, locked: false, maxVal });
+        islandState.fixedEntries.push({ node: gen, slider, valSpan, lockBtn, locked: true, maxVal });
       }
 
-      // Flex storage
-      const flexStor = storages.filter(s => s.mode !== 'fixed');
-      for (const st of flexStor) {
+      // Fixed storage — storage in fixed mode, dispatched MW IS a control
+      for (const st of storages.filter(s => s.mode === 'fixed')) {
         const soc = st.mw || 0;
         const maxDischarge = st.dischargeRate || 50;
         const maxCharge = st.chargeRate || 50;
@@ -214,7 +184,7 @@ export class BalanceModal {
         row.className = 'balance-node-row' + (soc === 0 ? ' balance-empty-row' : '');
         const label = document.createElement('span');
         label.className = 'balance-node-label';
-        label.innerHTML = (st.shortId || st.id.slice(-5)) + ' <span class="balance-rating">(' + maxDischarge + ' MW, SoC ' + soc.toFixed(0) + ' MWh)</span>';
+        label.innerHTML = '🔒 ' + (st.shortId || st.id.slice(-5)) + ' <span class="balance-rating">(' + maxDischarge + ' MW, SoC ' + soc.toFixed(0) + ' MWh)</span>';
         const ctrlDiv = document.createElement('div');
         ctrlDiv.className = 'balance-node-controls';
         const lockBtn = document.createElement('button');
@@ -249,9 +219,35 @@ export class BalanceModal {
         row.appendChild(label);
         row.appendChild(ctrlDiv);
         section.appendChild(row);
-        islandState.flexStorEntries.push({ node: st, slider, valSpan, lockBtn, locked, maxDischarge, maxCharge, soc });
+        islandState.fixedEntries.push({ node: st, slider, valSpan, lockBtn, locked, maxVal: maxDischarge });
       }
 
+      // Merit (non-fixed) gens — dispatched MW comes from the market, NOT a control
+      const meritGens = gens.filter(g => g.mode !== 'fixed');
+      for (const gen of meritGens) {
+        const dispatched = gen.baselineContract || 0;
+        const bidPrice = gen.bidPrice != null ? '$' + gen.bidPrice.toFixed(1) + '/MWh' : '—';
+        const bidQty = gen.bidQty != null ? gen.bidQty + ' MW' : '—';
+        const row = document.createElement('div');
+        row.className = 'balance-node-row balance-merit-row';
+        row.innerHTML = '<span class="balance-node-label">⚡ ' + (gen.shortId || gen.id.slice(-5)) + ' <span class="balance-rating">(' + (gen.rating || 100) + ' MVA)</span></span>' +
+          '<div class="balance-node-controls" style="gap:6px"><span style="color:#666;font-size:12px">Bid ' + bidPrice + ' x ' + bidQty + '</span><span style="color:#4a6a8a;font-size:12px;font-weight:500">dispatched ' + Math.round(dispatched) + ' MW</span></div>';
+        section.appendChild(row);
+        islandState.fixedEntries.push({ node: gen, value: dispatched });
+      }
+
+      // Flex storage (non-fixed) — dispatched MW comes from the market, NOT a control
+      const flexStor = storages.filter(s => s.mode !== 'fixed');
+      for (const st of flexStor) {
+        const soc = st.mw || 0;
+        const dispatched = st.baselineContract || 0;
+        const row = document.createElement('div');
+        row.className = 'balance-node-row' + (soc === 0 ? ' balance-empty-row' : '');
+        row.innerHTML = '<span class="balance-node-label">🔋 ' + (st.shortId || st.id.slice(-5)) + ' <span class="balance-rating">(' + (st.dischargeRate || 50) + ' MW, SoC ' + soc.toFixed(0) + ' MWh)</span></span>' +
+          '<div class="balance-node-controls" style="gap:6px"><span style="color:#4a6a8a;font-size:12px;font-weight:500">' + (dispatched >= 0 ? '+' : '') + Math.round(dispatched) + ' MW dispatched</span></div>';
+        section.appendChild(row);
+        islandState.fixedEntries.push({ node: st, value: dispatched });
+      }
       // Island footer
       const footer = document.createElement('div');
       footer.className = 'balance-island-footer';
@@ -313,6 +309,7 @@ export class BalanceModal {
 
       bodyEl.appendChild(section);
       updateSummary();
+      islandStates.push(islandState);
     }
 
     // Apply
@@ -320,19 +317,36 @@ export class BalanceModal {
       for (const islandState of islandStates) {
         const net = nets.find(n => n.id === islandState.netId);
         if (!net) continue;
-        for (const e of islandState.flexGenEntries) {
-          e.node.baselineContract = Number(e.slider.value);
-        }
-        for (const e of islandState.flexStorEntries) {
-          e.node.baselineContract = Number(e.slider.value);
+        for (const e of islandState.fixedEntries) {
+          if (e.slider != null) e.node.baselineContract = Number(e.slider.value);
         }
         for (const e of islandState.loadEntries) {
           e.node.mw = Number(e.slider.value);
           e.node.baseMw = e.node.mw;
         }
       }
+      // Reset trips, shedding, and frequencies — but DON'T call balanceGrid (it wipes baselines)
+      for (const n of state.nodes) {
+        if (n.type === 'generator' || n.type === 'storage') {
+          n.tripped = false;
+          n.freqTimer = 0;
+          n.agcOffset = 0;
+        }
+        if (n.type === 'generator') {
+          n.mw = n.baselineContract || 0;
+        }
+        if (n.type === 'storage') {
+          n.mwResponse = n.baselineContract || 0;
+          n.freqRestore = 0;
+        }
+        if (n.type === 'load') {
+          n.shedPct = 0;
+        }
+      }
+      for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
       overlay.remove();
       this.engine.recomputeNetworks();
+      for (const net of state.networks) { net.freq = 50; net.freqPrev = 50; }
       this.persister.persist();
       this.renderer.draw();
       this.statsPanel.update();

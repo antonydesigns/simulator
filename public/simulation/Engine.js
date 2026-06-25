@@ -332,24 +332,27 @@ export class SimulationEngine {
       }
   
       // --- Step 7: Under-Frequency Load Shedding (UFLS) ---
+      // 5 gentle stages. No auto-restoration — manual restore via load settings panel.
       if (hasLoad) {
-        const hasGFStorage = storages.some(s => s.mode === 'grid-forming');
         for (const load of loads) {
           if (load.baseMw === undefined) load.baseMw = load.mw || 0;
           const f = subFreqRef.value;
           let targetShed = 0;
           if (f < 48.0) targetShed = 0.50;
-          else if (f < 48.5) targetShed = 0.25;
+          else if (f < 48.3) targetShed = 0.40;
+          else if (f < 48.5) targetShed = 0.30;
+          else if (f < 48.7) targetShed = 0.20;
           else if (f < 49.0) targetShed = 0.10;
-          if (f < 49.5) {
+          const deadband = 0.05;
+          // Shed (never reduces while frequency is below deadband)
+          if (f < 50.0 - deadband) {
             load.shedPct = Math.max(load.shedPct || 0, targetShed);
-          } else if (!hasGFStorage) {
-            load.shedPct = 0; // only restore when no grid-forming storage running
           }
+          // No auto-restoration — only manual restore via load settings panel.
+          // Apply shedding in real-time
           load.mw = load.baseMw * (1 - (load.shedPct || 0));
         }
       }
-  
       // --- Step 7b: Blackout load shedding (grid-forming headroom) ---
       if (hasLoad && !hasGen) {
         const gfStorages = storages.filter(s => s.mode === 'grid-forming');
@@ -374,20 +377,35 @@ export class SimulationEngine {
       if (balancingGens.length > 0) {
         const agcRateLimit = 5;
         const maxDelta = agcRateLimit * physicsDt;
-        const totalHeadroom = balancingGens.reduce((s, g) => s + Math.max(0, (g.rating || 100) - (g.baselineContract || 0) - (g.fcrHeadroom || 10)), 0);
-        if (totalHeadroom > 0) {
-          const totalAgc = 50 * freqErr * physicsDt;
-          for (const gen of balancingGens) {
-            const upwardHeadroom = Math.max(0, (gen.rating || 100) - (gen.baselineContract || 0) - (gen.fcrHeadroom || 10));
-            const share = upwardHeadroom / totalHeadroom;
-            const agcDelta = totalAgc * share;
-            const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
-            if (Math.abs(clamped) > 0.0001) {
-              gen.agcOffset = (gen.agcOffset || 0) + clamped;
-              const minAgc = (gen.fcrHeadroom || 10) - (gen.baselineContract || 0);
-              const maxAgc = (gen.rating || 100) - (gen.baselineContract || 0);
-              gen.agcOffset = Math.max(minAgc, Math.min(maxAgc, gen.agcOffset));
-            }
+        const totalAgc = 50 * freqErr * physicsDt;
+
+        for (const gen of balancingGens) {
+          const rating = gen.rating || 100;
+          const bc = gen.baselineContract || 0;
+          const fcr = gen.fcrHeadroom || 10;
+          let headroom;
+          if (freqErr >= 0) {
+            // Need upward correction (deficit) — share of upward headroom
+            headroom = Math.max(0, rating - bc - fcr);
+          } else {
+            // Need downward correction (surplus) — share of downward headroom
+            headroom = Math.max(0, bc - fcr);
+          }
+          if (headroom <= 0) continue;
+
+          // Total headroom in the needed direction
+          const totalDirHeadroom = balancingGens.reduce((s, g) => {
+            const r = g.rating || 100; const b = g.baselineContract || 0; const c = g.fcrHeadroom || 10;
+            return s + (freqErr >= 0 ? Math.max(0, r - b - c) : Math.max(0, b - c));
+          }, 0);
+          if (totalDirHeadroom <= 0) continue;
+
+          const share = headroom / totalDirHeadroom;
+          const agcDelta = totalAgc * share;
+          const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
+          if (Math.abs(clamped) > 0.0001) {
+            gen.agcOffset = (gen.agcOffset || 0) + clamped;
+            gen.agcOffset = Math.max(-bc, Math.min(rating - bc, gen.agcOffset));
           }
         }
       }
@@ -593,7 +611,7 @@ export class SimulationEngine {
     
     if (sim.running) return;
     sim.running = true;
-    sim.interval = setInterval(simTick, 1000 / sim.tickHz);
+    sim.interval = setInterval(() => this.simTick(), 1000 / sim.tickHz);
   }
   
 
@@ -606,6 +624,7 @@ export class SimulationEngine {
   }
   
 
+
   restartSim() {
       const { state, sim } = this.store;
       const { draw, updateControls, updateStatsPanel } = this.callbacks;
@@ -616,13 +635,8 @@ export class SimulationEngine {
     sim.events = [];
     sim.simTime = 0;
     sim.lastMarketPat = 0;
-    // Reset load shedding first so loads have MW values for market dispatch
-    for (const load of state.nodes.filter(n => n.type === 'load')) {
-      load.shedPct = 0;
-      if (load.baseMw) load.mw = load.baseMw;
-    }
-    // First dispatch — sets every gen's baselineContract from merit order
-    this.dispatchMeritOrder();
+
+    // Reset trips, shedding, FCR/AGC offsets — but keep baselines intact
     for (const gen of state.nodes.filter(n => n.type === 'generator')) {
       gen.agcOffset = 0;
       gen.mw = gen.baselineContract || 0;
@@ -630,13 +644,15 @@ export class SimulationEngine {
       gen.freqTimer = 0;
     }
     for (const st of state.nodes.filter(n => n.type === 'storage')) {
-      st.baselineContract = 0;
       st.mwResponse = st.baselineContract || 0;
       st.agcOffset = 0;
       st.freqRestore = 0;
       st.tripped = false;
     }
-    // Reset tripped lines
+    for (const load of state.nodes.filter(n => n.type === 'load')) {
+      load.shedPct = 0;
+      if (load.baseMw) load.mw = load.baseMw;
+    }
     for (const c of state.connections) { c.tripped = false; c.tripTimer = 0; }
     state.frequency = 50;
     state.networks = this.findNetworks();

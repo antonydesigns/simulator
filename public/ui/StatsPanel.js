@@ -3,6 +3,8 @@
 export class StatsPanel {
   constructor(store) {
     this.store = store;
+    this._freqDragX = 0;
+    this._freqDragLeft = 0;
   }
 
   toggleBreakdown(nodeId) {
@@ -170,88 +172,326 @@ export class StatsPanel {
     if (freqChartSelectedNetworkId !== 'all' && d.networks && d.networks[freqChartSelectedNetworkId] !== undefined) {
       return d.networks[freqChartSelectedNetworkId];
     }
-    return d.f;
+    return d.frequency;
+  }
+
+  _initFreqChart() {
+    const canvas = document.getElementById('freq-chart-canvas');
+    if (!canvas || canvas.dataset._freqInit) return;
+    canvas.dataset._freqInit = '1';
+
+    const sim = this.store.sim;
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const store = this.store;
+      const defaultPoints = 250;
+      let range = store.freqViewRight || defaultPoints;
+      const zoomFactor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+      range = Math.max(20, Math.min(sim.dataBuffer.length, Math.round(range * zoomFactor)));
+      store.freqViewRight = range;
+      // Keep view anchored at right edge
+      store.freqViewLeft = 0;
+      this.drawFreqChart();
+    }, { passive: false });
+
+    let dragStartX = 0, dragStartLeft = 0;
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.freq-chart-close')) return;
+      dragStartX = e.clientX;
+      dragStartLeft = this.store.freqViewLeft || 0;
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (e.buttons !== 1 || dragStartX === 0) return;
+      const dx = e.clientX - dragStartX;
+      const panel = document.getElementById('freq-chart-panel');
+      const pw = (panel ? panel.clientWidth : 400) - 43;
+      const store = this.store;
+      const range = store.freqViewRight || sim.dataBuffer.length;
+      const idxDelta = Math.round((dx / pw) * range);
+      store.freqViewLeft = Math.max(0, (store.freqViewLeft || 0) - idxDelta);
+      const data = sim.dataBuffer;
+      if (store.freqViewLeft + range > data.length) {
+        store.freqViewLeft = Math.max(0, data.length - range);
+      }
+      this.drawFreqChart();
+    });
+    document.addEventListener('mouseup', () => {
+      dragStartX = 0;
+    });
+
+    // Scrollbar
+    const scrollbar = document.getElementById('freq-scrollbar');
+    if (scrollbar) {
+      scrollbar.addEventListener('input', () => {
+        const data = this.store.sim.dataBuffer;
+        const range = this.store.freqViewRight || 250;
+        const max = Math.max(0, data.length - range);
+        this.store.freqViewLeft = Math.min(max, parseInt(scrollbar.value));
+        // Stop auto-follow when user touches scrollbar
+        this.drawFreqChart();
+      });
+    }
   }
 
   drawFreqChart() {
+    this._initFreqChart();
     const { state, sim } = this.store;
+    const store = this.store;
     const panel = document.getElementById('freq-chart-panel');
-    if (!panel || panel.classList.contains('hidden') || !this.store.freqChartVisible) return;
+    if (!panel || panel.classList.contains('hidden') || !store.freqChartVisible) return;
+    const canvas = document.getElementById('freq-chart-canvas');
+    if (!canvas) return;
+    canvas.width = panel.clientWidth;
+    canvas.height = panel.clientHeight;
+    const ctx = canvas.getContext('2d');
     const w = panel.clientWidth - 4, h = panel.clientHeight - 4;
     if (w <= 0 || h <= 0) return;
     ctx.save();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // Frequency chart background
-    ctx.fillStyle = '#faf8f4'; ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = '#d6d2c8'; ctx.lineWidth = 0.5; ctx.strokeRect(1, 1, w - 2, h - 2);
+
+    // Background
+    ctx.fillStyle = '#faf8f4';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = '#d6d2c8';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(1, 1, w - 2, h - 2);
+
     const data = sim.dataBuffer;
     if (data.length < 2) { ctx.restore(); return; }
-    const pad = 25, pw = w - 2 * pad, ph = h - 2 * pad - 5;
-    // Determine range
-    const vals = data.map(d => d.f);
-    let fmin = Math.min(...vals), fmax = Math.max(...vals);
-    const margin = Math.max((fmax - fmin) * 0.2, 0.1);
-    fmin -= margin; fmax += margin;
-    // Axes
-    ctx.strokeStyle = '#d6d2c8'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(pad, pad); ctx.lineTo(pad, pad + ph); ctx.lineTo(pad + pw, pad + ph); ctx.stroke();
-    // Plot
-    ctx.strokeStyle = '#4a90d9'; ctx.lineWidth = 1.5; ctx.beginPath();
-    for (let i = 0; i < data.length; i++) {
-      const x = pad + (i / (data.length - 1)) * pw;
-      const y = pad + ph - ((data[i].f - fmin) / (fmax - fmin)) * ph;
+
+    const padL = 35, padR = 8, padT = 10, padB = 20;
+    const pw = w - padL - padR, ph = h - padT - padB;
+
+    // Determine visible range
+    const total = data.length;
+    const defaultRange = 250;
+    let range = store.freqViewRight || defaultRange;
+    let viewLeft = store.freqViewLeft || 0;
+
+    // Auto-follow if at right edge
+    if (!store.freqViewLeft && total > range) {
+      viewLeft = total - range;
+    }
+    // Clamp
+    if (viewLeft + range > total) viewLeft = Math.max(0, total - range);
+    if (viewLeft < 0) viewLeft = 0;
+    viewLeft = Math.floor(viewLeft);
+    const viewEnd = Math.min(total, viewLeft + range);
+    const visibleData = data.slice(viewLeft, viewEnd);
+    if (visibleData.length < 2) { ctx.restore(); return; }
+
+    // Auto-scale Y-axis based on visible data
+    const vals = visibleData.map(d => d.frequency);
+    let yMin = Math.min(...vals);
+    let yMax = Math.max(...vals);
+    // Add margin + ensure 50 Hz is always visible
+    const margin = Math.max((yMax - yMin) * 0.15, 0.1);
+    yMin = Math.min(yMin - margin, 49.5);
+    yMax = Math.max(yMax + margin, 50.5);
+    // Round to nice values
+    yMin = Math.floor(yMin * 10) / 10;
+    yMax = Math.ceil(yMax * 10) / 10;
+    if (yMax - yMin < 0.5) { yMin -= 0.25; yMax += 0.25; }
+    if (50 < yMin) yMin = 49.5;
+    if (50 > yMax) yMax = 50.5;
+    store.freqYMin = yMin;
+    store.freqYMax = yMax;
+
+    const yScale = ph / (yMax - yMin);
+
+    // 50 Hz reference line
+    const y50 = padT + (yMax - 50) * yScale;
+    ctx.strokeStyle = '#e0dcd0';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padL, y50);
+    ctx.lineTo(padL + pw, y50);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Y-axis labels (5 ticks)
+    ctx.fillStyle = '#999';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    const tickStep = (yMax - yMin) / 5;
+    for (let t = 0; t <= 5; t++) {
+      const val = yMin + t * tickStep;
+      const y = padT + (yMax - val) * yScale;
+      if (y < padT - 5 || y > padT + ph + 5) continue;
+      ctx.fillText(val.toFixed(1), padL - 6, y);
+      ctx.strokeStyle = '#e0dcd0';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(padL - 3, y);
+      ctx.lineTo(padL, y);
+      ctx.stroke();
+      // Grid line
+      ctx.strokeStyle = '#e8e4da';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(padL + pw, y);
+      ctx.stroke();
+    }
+
+    // Plot the line trace
+    ctx.strokeStyle = '#4a90d9';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    const xScale = pw / (visibleData.length - 1);
+    for (let i = 0; i < visibleData.length; i++) {
+      const x = padL + i * xScale;
+      const y = padT + (yMax - visibleData[i].frequency) * yScale;
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
-    // Labels
-    ctx.fillStyle = '#333'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(state.frequency.toFixed(3) + ' Hz', pw / 2 + pad, pad + ph + 15);
-    ctx.textAlign = 'right'; ctx.fillText(fmax.toFixed(2), pad - 4, pad + 10);
-    ctx.textAlign = 'right'; ctx.fillText(fmin.toFixed(2), pad - 4, pad + ph - 5);
+
+    // Current frequency label at the right edge
+    const lastVal = visibleData[visibleData.length - 1].frequency;
+    const curX = padL + pw;
+    const curY = padT + (yMax - lastVal) * yScale;
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(lastVal.toFixed(3) + ' Hz', curX - 4, curY - 4);
+
+    // Update scrollbar
+    const scrollbar = document.getElementById('freq-scrollbar');
+    if (scrollbar && scrollbar !== document.activeElement) {
+      const maxScroll = Math.max(0, total - range);
+      scrollbar.max = maxScroll;
+      scrollbar.value = Math.min(maxScroll, viewLeft);
+    }
+
+    // Time info
+    ctx.fillStyle = '#888';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText('± ' + viewLeft + ' .. ' + viewEnd + ' / ' + total, padL + 4, padT + ph + 4);
+
     ctx.restore();
   }
 
   drawMeritOrderChart() {
-    const { state, canvas, ctx } = this.store;
-    const panel = document.getElementById('merit-chart-panel');
-    if (!panel || panel.classList.contains('hidden') || !this.store.meritChartVisible) return;
-    const w = panel.clientWidth - 4, h = panel.clientHeight - 4;
+    const { state, sim } = this.store;
+    if (!this.store.meritChartVisible) return;
+    const panel = document.getElementById('merit-panel');
+    if (!panel || panel.classList.contains('hidden')) return;
+    const canvas = document.getElementById('merit-canvas');
+    if (!canvas) return;
+    canvas.width = panel.clientWidth;
+    canvas.height = panel.clientHeight;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width - 4, h = canvas.height - 4;
     if (w <= 0 || h <= 0) return;
     ctx.save();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#faf8f4'; ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = '#d6d2c8'; ctx.lineWidth = 0.5; ctx.strokeRect(1, 1, w - 2, h - 2);
-    const pad = 30, pw = w - 2 * pad, ph = h - 2 * pad - 5;
-    const data = sim.dataBuffer;
-    if (data.length < 2) { ctx.restore(); return; }
-    const last = data[data.length - 1];
-    const bids = last.meritBids || [];
-    if (bids.length < 2) { ctx.restore(); return; }
-    const maxQty = Math.max(...bids.map(b => b.q || 1)) * 1.1;
-    const maxPrice = Math.max(...bids.map(b => b.p || 1)) * 1.2;
+    ctx.fillStyle = '#faf8f4';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = '#d6d2c8';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(1, 1, w - 2, h - 2);
+
+    // Build merit order stack from current generator state
+    const gens = state.nodes.filter(n => n.type === 'generator' && !n.tripped && n.mode !== 'fixed');
+    const bids = gens
+      .map(g => ({ price: g.bidPrice || 50, qty: g.bidQty || g.rating || 100, label: g.shortId || g.id.slice(-5) }))
+      .sort((a, b) => a.price - b.price);
+    if (!bids.length) { ctx.restore(); return; }
+
+    const pad = 40, pw = w - 2 * pad, ph = h - 2 * pad - 5;
+    const maxQty = Math.max(bids.reduce((s, b) => s + b.qty, 0), 1);
+    const maxPrice = Math.max(...bids.map(b => b.price), 50) * 1.2;
+
     // Axes
-    ctx.strokeStyle = '#d6d2c8'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(pad, pad); ctx.lineTo(pad, pad + ph); ctx.lineTo(pad + pw, pad + ph); ctx.stroke();
-    // Stack
+    ctx.strokeStyle = '#d6d2c8';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad, pad);
+    ctx.lineTo(pad, pad + ph);
+    ctx.lineTo(pad + pw, pad + ph);
+    ctx.stroke();
+
+    // Y-axis labels ($/MWh)
+    ctx.fillStyle = '#999';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let p = 0; p <= 5; p++) {
+      const val = (p / 5) * maxPrice;
+      const y = pad + ph - (p / 5) * ph;
+      ctx.fillText('$' + Math.round(val), pad - 5, y);
+      ctx.strokeStyle = '#eee';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(pad - 3, y);
+      ctx.lineTo(pad, y);
+      ctx.stroke();
+    }
+
+    // Stacked bid blocks
     let cx = pad;
-    ctx.fillStyle = '#7eb87e';
-    for (const b of bids) {
-      const bw = (b.q / maxQty) * pw;
-      const bh = (b.p / maxPrice) * ph;
-      ctx.fillRect(cx, pad + ph - bh, Math.max(bw, 1), bh);
-      ctx.strokeStyle = '#555'; ctx.lineWidth = 0.5;
-      ctx.strokeRect(cx, pad + ph - bh, Math.max(bw, 1), bh);
+    const colors = ['#7eb87e', '#6aa86a', '#5a985a', '#8ec88e', '#a0d8a0', '#70b070', '#4a904a', '#3a803a'];
+    for (let i = 0; i < bids.length; i++) {
+      const b = bids[i];
+      const bw = Math.max((b.qty / maxQty) * pw, 1);
+      const bh = (b.price / maxPrice) * ph;
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.fillRect(cx, pad + ph - bh, bw, bh);
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(cx, pad + ph - bh, bw, bh);
+      // Label if wide enough
+      if (bw > 20) {
+        ctx.fillStyle = '#fff';
+        ctx.font = '8px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(b.label, cx + bw / 2, pad + ph - bh / 2);
+      }
       cx += bw;
     }
+
+    // Demand vertical line
+    const totalLoad = state.nodes.filter(n => n.type === 'load').reduce((s, l) => s + (l.mw || 0), 0);
+    const demandX = pad + Math.min((totalLoad / maxQty) * pw, pw);
+    ctx.strokeStyle = '#4a90d9';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 3]);
+    ctx.beginPath();
+    ctx.moveTo(demandX, pad);
+    ctx.lineTo(demandX, pad + ph);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#4a90d9';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('Demand ' + Math.round(totalLoad) + ' MW', demandX, pad + ph + 14);
+
     // SMP line
-    if (last.smp) {
-      const smpY = pad + ph - (last.smp / maxPrice) * ph;
-      ctx.strokeStyle = '#d94a4a'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);
-      ctx.beginPath(); ctx.moveTo(pad, smpY); ctx.lineTo(pad + pw, smpY); ctx.stroke();
+    const smp = state.smp;
+    if (smp != null && smp > 0) {
+      const smpY = pad + ph - (smp / maxPrice) * ph;
+      ctx.strokeStyle = '#d94a4a';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(pad, smpY);
+      ctx.lineTo(pad + pw, smpY);
+      ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = '#d94a4a'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText('SMP $' + last.smp.toFixed(1), pad + 4, smpY - 4);
+      ctx.fillStyle = '#d94a4a';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('SMP $' + smp.toFixed(1), pad + 4, smpY - 3);
     }
+
     ctx.restore();
   }
 }

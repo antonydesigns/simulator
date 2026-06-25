@@ -54,7 +54,7 @@ function deleteNode(id) {
   state.connections = state.connections.filter(c => c.sourceId !== id && c.targetId !== id);
   state.selectedNodeIds.delete(id);
   if (state.pendingSourceId === id) state.pendingSourceId = null;
-  settingsPanel.close(id);
+  settingsPanel.closeSettings(id);
   // Reset frequency if last gen removed
   if (del && del.type === 'generator' && state.nodes.filter(n => n.type === 'generator').length === 0) {
     state.frequency = 50;
@@ -242,9 +242,12 @@ canvas.addEventListener('mousedown', (e) => {
       state.selectedConnIds = new Set();
     }
     renderer.draw();
+  } else if (!islandHit) {
+    store.selectedNetworkId = null;
+    if (store.statsPanelVisible) statsPanel.update();
+    renderer.draw();
   }
 });
-
 canvas.addEventListener('mousemove', (e) => {
   const world = renderer.mouseToWorld(e), screen = renderer.mouseToScreen(e);
   ptr.mouseWorld = world; ptr.mouseScreen = screen;
@@ -300,7 +303,7 @@ canvas.addEventListener('mousemove', (e) => {
 
   // Detect island hover
   const islandHit = hitIsland(world.x, world.y);
-  store.selectedNetworkId = islandHit ? islandHit.net.id : null;
+  store.hoveredIslandId = islandHit ? islandHit.net.id : null;
   store.hoveredIslandHeader = islandHit ? islandHit.isHeader : false;
 
   state.hoverLine = renderer.findNearestLine(world.x, world.y, 15 / state.view.scale);
@@ -397,7 +400,7 @@ function onDoubleClickNode(hit) {
     renderer.draw();
   } else {
     // Gen/load/storage: open settings panel
-    settingsPanel.open(hit.id);
+    settingsPanel.openSettings(hit.id);
   }
 }
 
@@ -411,7 +414,7 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 canvas.addEventListener('mouseleave', () => {
-  store.selectedNetworkId = null;
+  store.hoveredIslandId = null;
   store.hoveredIslandHeader = false;
   renderer.draw();
 });
@@ -431,13 +434,13 @@ menu.addEventListener('click', (e) => {
   else if (a === 'add-load') addNode('load', wx, wy);
   else if (a === 'add-storage') addNode('storage', wx, wy);
   else if (a === 'add-junction') addNode('junction', wx, wy);
-  else if (a === 'open-settings') settingsPanel.open(id);
+  else if (a === 'open-settings') settingsPanel.openSettings(id);
   else if (a === 'delete-node' && id) deleteNode(id);
   else if (a === 'delete-line' && connId) {
     state.connections = state.connections.filter(c => c.id !== connId);
     engine.recomputeNetworks(); persister.persist(); renderer.draw();
   } else if (a === 'line-settings' && connId) {
-    settingsPanel.openLine(connId);
+    settingsPanel.openLineSettings(connId);
   } else if (a === 'rename-island' && netId) {
     const net = (state.networks || []).find(n => n.id === netId);
     if (net) {
@@ -609,7 +612,7 @@ document.addEventListener('keydown', (e) => {
       state.nodes = state.nodes.filter(n => n.id !== id);
       state.connections = state.connections.filter(c => c.sourceId !== id && c.targetId !== id);
       if (state.pendingSourceId === id) state.pendingSourceId = null;
-      settingsPanel.close(id);
+      settingsPanel.closeSettings(id);
     }
     state.selectedNodeIds = new Set(); state.selectedConnIds = new Set();
     if (hadGen && state.nodes.filter(n => n.type === 'generator').length === 0) state.frequency = 50;
