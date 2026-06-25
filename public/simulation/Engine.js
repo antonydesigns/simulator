@@ -237,7 +237,7 @@ export class SimulationEngine {
               load.shedPct = 0;
               delete load._preBlackoutBaseMw;
             }
-            sim.lastMarketPat = -900;
+            sim.lastMarketPat = Math.floor(sim.simTime * 720);
             state.blackStartNets.delete(net.id);
             delete net.blackStart;
             sim.events.push({ t: (sim.dataBuffer.length || 0) * 0.25, type: 'blackstart-complete', netId: net.id });
