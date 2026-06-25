@@ -436,13 +436,14 @@ export class SimulationEngine {
           else if (f < 48.7) targetShed = 0.20;
           else if (f < 49.0) targetShed = 0.10;
           const deadband = 0.05;
-          // Shed (never reduces while frequency is below deadband)
+          // Apply shedding only when underfrequency
           if (f < 50.0 - deadband) {
             load.shedPct = Math.max(load.shedPct || 0, targetShed);
+            load.mw = Math.round(load.baseMw * (1 - (load.shedPct || 0)));
+          } else {
+            // Normal or overfrequency — full demand (shedPct still tracked for UI)
+            load.mw = Math.round(load.baseMw);
           }
-          // No auto-restoration — only manual restore via load settings panel.
-          // Apply shedding in real-time
-          load.mw = load.baseMw * (1 - (load.shedPct || 0));
         }
       }
       // --- Step 7b: Blackout load shedding (grid-forming headroom) ---
