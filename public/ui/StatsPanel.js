@@ -49,9 +49,10 @@ export class StatsPanel {
       // Black Start buttons + progress
       for (const net of nets) {
         const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
-        const gfStorages = netNodes.filter(n => n.type === 'storage' && n.mode === 'grid-forming' && !n.tripped && (n.mw || 0) > 0.5);
-        const anyOnlineSource = netNodes.filter(n => (n.type === 'generator' || n.type === 'storage') && !n.tripped);
-        const isEligible = gfStorages.length > 0 && anyOnlineSource.length === gfStorages.length && !net.blackStart;
+        const gfStorages = netNodes.filter(n => n.type === 'storage' && n.mode === 'grid-forming' && (n.mw || 0) > 0.5);
+        const anyOnlineGens = netNodes.filter(n => n.type === 'generator' && !n.tripped);
+        const anyOnlineNonGfsStor = netNodes.filter(n => n.type === 'storage' && n.mode !== 'grid-forming' && !n.tripped);
+        const isEligible = gfStorages.length > 0 && anyOnlineGens.length === 0 && anyOnlineNonGfsStor.length === 0 && !net.blackStart;
         if (isEligible) {
           html += '<button class="blackstart-btn" data-net-id="' + net.id + '" style="width:100%;padding:8px;margin-top:6px;background:#e67e22;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:13px">';
           html += '&#9889; Black Start ' + net.id;
@@ -186,7 +187,7 @@ export class StatsPanel {
         const net = state.networks.find(n => n.id === netId);
         if (!net || net.blackStart) return;
         const netNodes = [...net.nodeIds].map(id => state.nodes.find(n => n.id === id)).filter(Boolean);
-        const gfStorages = netNodes.filter(n => n.type === 'storage' && n.mode === 'grid-forming' && !n.tripped && (n.mw || 0) > 0.5);
+        const gfStorages = netNodes.filter(n => n.type === 'storage' && n.mode === 'grid-forming' && (n.mw || 0) > 0.5);
         if (gfStorages.length === 0) return;
         for (const load of netNodes.filter(n => n.type === 'load')) {
           load._preBlackoutBaseMw = load._preBlackoutBaseMw || load.baseMw || load.mw || 0;
