@@ -12,7 +12,6 @@ export class SimulationEngine {
     const { draw, updateControls, updateStatsPanel } = this.callbacks;
 
     state.networks = this.findNetworks();
-    // Ensure freqPrev is initialized for all networks
     for (const net of state.networks) {
       if (net.freqPrev === undefined) net.freqPrev = net.freq || 50;
     }
@@ -40,39 +39,59 @@ export class SimulationEngine {
     return daily * weekend;
   }
 
-  dispatchMeritOrder(topUpBalancing = false) {
+  dispatchMeritOrder(topUpBalancing = false, writeMw = false, network = null) {
     const { state, sim } = this.store;
     const { draw, updateControls, updateStatsPanel } = this.callbacks;
 
+    // Scope to a specific network's nodes when provided
+    const netIds = network ? network.nodeIds : null;
+    const inNet = (n) => !netIds || (netIds.has(n.id));
+
     const allGens = state.nodes.filter(
-      (n) => n.type === "generator" && !n.tripped,
+      (n) => n.type === "generator" && !n.tripped && inNet(n),
     );
     // Reset baselines for merchant + balancing gens (fixed gens keep manual baseline)
     for (const gen of allGens) {
-      if (gen.mode !== "fixed") gen.baselineContract = 0;
+      if (gen.mode !== "fixed" && gen.mode !== "load-follow") gen.baselineContract = 0;
     }
     // Reset merchant storage baselines too
     const allStorages = state.nodes.filter(
-      (n) => n.type === "storage" && !n.tripped && n.mode === "merchant"
+      (n) => n.type === "storage" && !n.tripped && n.mode === "merchant" && inNet(n)
     );
     for (const st of allStorages) {
       st.baselineContract = 0;
     }
 
     const loadTotal = state.nodes
-      .filter((n) => n.type === "load")
+      .filter((n) => n.type === "load" && inNet(n))
       .reduce((s, l) => s + (l.mw || 0), 0);
-    // Add charging demand from merchant storage with buy contracts
+    // Add charging demand from merchant storage with active buy contracts
+    const patSec2 = sim.simTime * 720;
+    const tod2 = ((patSec2 % 86400) / 86400) * 24;
     const stChargeDemand = allStorages
-      .filter((st) => st.buyTrigger !== "off")
-      .reduce((s, st) => s + (st.chargeRate || 50), 0);
+      .filter((st) => {
+        const trigger = st.buyTrigger || "off";
+        if (trigger === "off") return false;
+        const buyByPrice = (trigger === "price" || trigger === "both") && (state.smp != null) && state.smp <= (st.buyPrice || 20);
+        let buyByTime = false;
+        if (trigger === "time" || trigger === "both") {
+          const start = st.buyStartHour || 3;
+          const dur = st.buyDuration || 4;
+          if (dur > 0) {
+            if (start + dur <= 24) buyByTime = tod2 >= start && tod2 < start + dur;
+            else buyByTime = tod2 >= start || tod2 < ((start + dur) % 24);
+          }
+        }
+        return buyByPrice || buyByTime;
+      })
+      .reduce((s, st) => s + Math.max(0, -(st.mwResponse || 0)), 0);
     const totalLoad = loadTotal + stChargeDemand;
 
     // Build merit order: non-fixed gens + merchant storage with sell triggers
     const bids = [];
     // Generator bids
     for (const gen of allGens) {
-      if (gen.mode === "fixed") continue;
+      if (gen.mode === "fixed" || gen.mode === "load-follow") continue;
       bids.push({
         node: gen,
         price: gen.bidPrice || 50,
@@ -111,7 +130,7 @@ export class SimulationEngine {
     for (const bid of bids) {
       const dispatch = Math.min(remaining, bid.qty);
       bid.node.baselineContract = Math.max(0, dispatch);
-      if (bid.node.type === "generator") bid.node.mw = dispatch;
+      if (writeMw && bid.node.type === "generator") bid.node.mw = dispatch;
       remaining -= dispatch;
       if (dispatch > 0) smp = bid.price;
     }
@@ -120,59 +139,23 @@ export class SimulationEngine {
     const maxBidPrice = bids.length > 0 ? bids.reduce((m, b) => Math.max(m, b.price), 0) : 0;
     state.smp = remaining <= 0 ? smp : maxBidPrice;
 
-    // Sync merchant storage mwResponse to baselineContract (balanceGrid may have set differently)
-    for (const st of allStorages) {
-      st.mwResponse = st.baselineContract || 0;
-    }
-
-    // Top up with balancing assets if merchant bids fall short
-    if (remaining > 0 && topUpBalancing) {
-      // Collect balancing generators (spare capacity after market dispatch)
-      const balancingGens = state.nodes.filter(
-        (n) => n.type === "generator" && !n.tripped && n.mode === "balancing"
-      );
-      // Collect balancing storage
-      const balancingStorages = state.nodes.filter(
-        (n) => n.type === "storage" && !n.tripped && n.mode === "balancing"
-      );
-
-      // Build asset list with available balancing capacity
-      const balancingAssets = [];
-      for (const gen of balancingGens) {
-        const spare = (gen.rating || 100) - (gen.baselineContract || 0);
-        if (spare > 0) balancingAssets.push({ node: gen, capacity: spare, isGen: true });
-      }
-      for (const st of balancingStorages) {
-        const rate = st.dischargeRate || 50;
-        balancingAssets.push({ node: st, capacity: rate, isGen: false });
-      }
-
-      if (balancingAssets.length > 0) {
-        // Reset balancing storage baselines (gens keep their market dispatch baseline)
-        for (const st of balancingStorages) {
-          st.baselineContract = 0;
-          st.mwResponse = 0;
+    // Track marginal generators (those at SMP price) for AGC scope
+    state.marginalGenIds = new Set();
+    if (remaining <= 0) {
+      for (const bid of bids) {
+        if (bid.node.type === "generator" && (bid.node.baselineContract || 0) > 0 && bid.price === smp) {
+          state.marginalGenIds.add(bid.node.id);
         }
-        const totalCapacity = balancingAssets.reduce((s, a) => s + a.capacity, 0);
-        if (totalCapacity > 0) {
-          for (const asset of balancingAssets) {
-            const share = asset.capacity / totalCapacity;
-            let alloc = Math.round(remaining * share * 10) / 10;
-            alloc = Math.min(alloc, asset.capacity);
-            if (asset.isGen) {
-              // Add balancing allocation on top of market dispatch
-              asset.node.baselineContract = (asset.node.baselineContract || 0) + alloc;
-              asset.node.mw = asset.node.baselineContract;
-            } else {
-              // Storage baselines are fully replaced by balancing allocation
-              asset.node.baselineContract = alloc;
-              asset.node.mwResponse = alloc;
-            }
-          }
-        }
-        remaining = 0;
       }
     }
+    // Under scarcity, marginalGenIds stays empty — AGC falls back to all balancing gens
+
+    // Reset AGC offsets (dispatch is the re-dispatch, start clean)
+    for (const gen of allGens) gen.agcOffset = 0;
+    for (const st of allStorages) st.agcOffset = 0;
+    // Reset balancing storages too (not in merchant scope)
+    for (const st of state.nodes.filter(n => n.type === "storage" && !n.tripped && n.mode === "balancing" && inNet(n))) st.agcOffset = 0;
+
     state.marketLoad = totalLoad;
   }
 
@@ -188,6 +171,19 @@ export class SimulationEngine {
     } = this.callbacks;
 
     this.recomputeNetworks();
+    // === Market dispatch (once per tick, scoped to main grid) ===
+    const mainNet = state.networks.find(net => {
+      const netNodes = [...net.nodeIds]
+        .map(id => state.nodes.find(n => n.id === id))
+        .filter(Boolean);
+      return netNodes.some(n => n.type === "load");
+    });
+    const patSec = sim.simTime * 720;
+    if (mainNet && patSec - (sim.lastMarketPat || 0) >= 900) {
+      sim.lastMarketPat = patSec;
+      this.dispatchMeritOrder(true, false, mainNet);
+      if (meritChartVisible) drawMeritOrderChart();
+    }
     const f0 = 50;
     const dt = (1 / sim.tickHz) * sim.speed;
     sim.simTime += dt;
@@ -247,13 +243,7 @@ export class SimulationEngine {
         }
       }
 
-      // --- Market dispatch (15 pattern-minutes = 900 pattern-seconds) ---
-      const patSec = sim.simTime * 720;
-      if (patSec - (sim.lastMarketPat || 0) >= 900) {
-        sim.lastMarketPat = patSec;
-        this.dispatchMeritOrder(true);
-        if (meritChartVisible) drawMeritOrderChart();
-      }
+
 
       const totalGen = gens.reduce((s, g) => s + (g.mw || 0), 0);
       const totalLoad = loads.reduce((s, l) => s + (l.mw || 0), 0);
@@ -590,16 +580,24 @@ const rampUpTC = st.rampUpTC || 0.1;
             subFreqRef.value = Math.max(0, subFreq - 10 * physicsDt);
           }
 
+          // --- Settling grace period ---
+          if ((sim.settlingTimer || 0) > 0) {
+            sim.settlingTimer = Math.max(0, sim.settlingTimer - physicsDt);
+          }
+          const settling = (sim.settlingTimer || 0) > 0;
+          const tripHigh = settling ? 54 : 52;
+          const tripLow = settling ? 46 : 48;
+
           // --- Step 4: Generator frequency protection ---
           for (const gen of allGens) {
             if (gen.tripped) continue;
-            if (subFreqRef.value > 52 || subFreqRef.value < 48) {
+            if (subFreqRef.value > tripHigh || subFreqRef.value < tripLow) {
               gen.freqTimer = (gen.freqTimer || 0) + physicsDt;
               if (gen.freqTimer >= 1) {
                 gen.tripped = true;
                 gen.mw = 0;
                 const cause =
-                  subFreqRef.value > 52 ? "overspeed" : "underfrequency";
+                  subFreqRef.value > tripHigh ? "overspeed" : "underfrequency";
                 sim.events.push({
                   t: (sim.dataBuffer.length || 0) * 0.25,
                   type: "gen-trip",
@@ -616,7 +614,7 @@ const rampUpTC = st.rampUpTC || 0.1;
           // --- Step 4b: Storage frequency protection ---
           for (const st of storages) {
             if (st.tripped || st.mode === "grid-forming") continue;
-            if (subFreqRef.value > 52 || subFreqRef.value < 48) {
+            if (subFreqRef.value > tripHigh || subFreqRef.value < tripLow) {
               st.freqTimer = (st.freqTimer || 0) + physicsDt;
               if (st.freqTimer >= 1) {
                 st.tripped = true;
@@ -627,7 +625,7 @@ const rampUpTC = st.rampUpTC || 0.1;
                   nodeId: st.id,
                   freq: subFreqRef.value,
                   cause:
-                    subFreqRef.value > 52 ? "overfrequency" : "underfrequency",
+                    subFreqRef.value > tripHigh ? "overfrequency" : "underfrequency",
                 });
               }
             } else {
@@ -743,7 +741,7 @@ const rampUpTC = st.rampUpTC || 0.1;
           }
 
           // --- Step 8: AGC (gens) ---
-          const balancingGens = gens.filter((g) => g.mode === "balancing");
+          const balancingGens = gens.filter((g) => g.mode === "balancing" && (state.marginalGenIds.size === 0 || state.marginalGenIds.has(g.id)));
           const freqErr = f0 - subFreqRef.value;
           if (balancingGens.length > 0) {
             const agcRateLimit = 5;
@@ -927,7 +925,7 @@ const rampUpTC = st.rampUpTC || 0.1;
         if (entry.modeSelect) entry.modeSelect.value = st.mode || "balancing";
         if (entry.fcrGroup)
           entry.fcrGroup.style.display =
-            st.mode === "balancing" || st.mode === "fcr-only" ? "" : "none";
+            st.mode === "balancing" || st.mode === "fcr-only" || st.mode === "load-follow" ? "" : "none";
         if (entry.fixedGroup)
           entry.fixedGroup.style.display = st.mode === "fixed" ? "" : "none";
         if (entry.neutralGroup)
@@ -974,7 +972,7 @@ const rampUpTC = st.rampUpTC || 0.1;
       const agcBadge = document.getElementById("agc-badge");
       const allGens = state.nodes.filter((n) => n.type === "generator");
       const fcrGens = allGens.filter(
-        (g) => g.mode === "balancing" || g.mode === "fcr-only",
+        (g) => g.mode === "balancing" || g.mode === "fcr-only" || g.mode === "load-follow",
       );
       const fcrActive = fcrGens.some((g) => {
         const dev = (state.frequency - f0) / f0;
@@ -985,7 +983,7 @@ const rampUpTC = st.rampUpTC || 0.1;
       });
       fcrBadge.className =
         "status-badge " + (fcrActive ? "fcr-active" : "fcr-inactive");
-      const balancingGens = allGens.filter((g) => g.mode === "balancing");
+      const balancingGens = allGens.filter((g) => g.mode === "balancing" || g.mode === "load-follow");
       const agcActive =
         Math.abs(f0 - state.frequency) > 0.001 && balancingGens.length > 0;
       agcBadge.className =
@@ -1053,6 +1051,7 @@ const rampUpTC = st.rampUpTC || 0.1;
 
     if (changed) this.callbacks.draw();
     if (freqChartVisible) drawFreqChart();
+    if (meritChartVisible) drawMeritOrderChart();
   }
 
   startSim() {
@@ -1135,7 +1134,15 @@ const rampUpTC = st.rampUpTC || 0.1;
       }
     }
     // Re-dispatch merchant bids and top up with balancing storage
-    this.dispatchMeritOrder(true);
+    sim.settlingTimer = 3.0;
+    // Find main network (one with loads) for restart dispatch
+    const restartMainNet = state.networks.find(net => {
+      const netNodes = [...net.nodeIds]
+        .map(id => state.nodes.find(n => n.id === id))
+        .filter(Boolean);
+      return netNodes.some(n => n.type === "load");
+    });
+    this.dispatchMeritOrder(true, true, restartMainNet);
     this.callbacks.draw();
     this.callbacks.updateControls();
     this.callbacks.updateStatsPanel();

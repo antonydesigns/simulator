@@ -86,6 +86,7 @@ export class SettingsPanel {
           <div class="settings-slider-group">
             <select class="gen-mode-select">
               <option value="balancing" ${node.mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option>
+              <option value="load-follow" ${node.mode === 'load-follow' ? 'selected' : ''}>Load-Follow (FCR + AGC)</option>
               <option value="fcr-only" ${node.mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option>
               <option value="merchant" ${node.mode === 'merchant' ? 'selected' : ''}>Merchant (Price Only)</option>
               <option value="fixed" ${node.mode === 'fixed' ? 'selected' : ''}>Fixed</option>
@@ -216,7 +217,7 @@ export class SettingsPanel {
         // Toggle market rows visibility (hidden for fixed mode)
         const marketRows = panel.querySelectorAll('.market-row');
         for (const row of marketRows) {
-          row.style.display = modeSelect.value === 'fixed' ? 'none' : '';
+          row.style.display = (modeSelect.value === 'fixed' || modeSelect.value === 'load-follow') ? 'none' : '';
         }
         this.persister.persist();
       });
@@ -324,6 +325,7 @@ export class SettingsPanel {
           <div class="settings-slider-group">
             <select class="storage-mode-select">
               <option value="balancing" ${mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option>
+              <option value="load-follow" ${mode === 'load-follow' ? 'selected' : ''}>Load-Follow (FCR + AGC)</option>
               <option value="fcr-only" ${mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option>
               <option value="grid-forming" ${mode === 'grid-forming' ? 'selected' : ''}>Grid Forming</option>
               <option value="fixed" ${mode === 'fixed' ? 'selected' : ''}>Fixed</option>
@@ -369,7 +371,7 @@ export class SettingsPanel {
 
     entry.modeSelect.addEventListener('change', () => {
       node.mode = entry.modeSelect.value;
-      entry.fcrGroup.style.display = (node.mode === 'balancing' || node.mode === 'fcr-only' || node.mode === 'grid-forming') ? '' : 'none';
+      entry.fcrGroup.style.display = (node.mode === 'balancing' || node.mode === 'fcr-only' || node.mode === 'grid-forming' || node.mode === 'load-follow') ? '' : 'none';
       entry.fixedGroup.style.display = node.mode === 'fixed' ? '' : 'none';
       if (entry.merchantGroup) entry.merchantGroup.style.display = node.mode === 'merchant' ? '' : 'none';
       if (entry.neutralGroup) entry.neutralGroup.style.display = node.mode === 'balancing' ? '' : 'none';
