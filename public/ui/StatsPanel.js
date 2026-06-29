@@ -5,6 +5,8 @@ export class StatsPanel {
     this.store = store;
     this._freqDragX = 0;
     this._freqDragLeft = 0;
+    this._meritBars = [];
+    this._meritHoverIdx = -1;
   }
 
   toggleBreakdown(nodeId) {
@@ -419,6 +421,8 @@ export class StatsPanel {
     ctx.textBaseline = 'top';
     ctx.fillText('± ' + viewLeft + ' .. ' + viewEnd + ' / ' + total, padL + 4, padT + ph + 4);
 
+
+
     ctx.restore();
   }
 
@@ -448,7 +452,7 @@ export class StatsPanel {
       .map(g => ({
         price: (g.mode === 'fixed' || g.mode === 'load-follow') ? -10 : (g.bidPrice || 50),
         qty: (g.mode === 'fixed' || g.mode === 'load-follow')
-          ? (g.baselineContract || 0)
+          ? (g.rating || 100)
           : (g.bidQty || g.rating || 100),
         label: g.shortId || g.id.slice(-5),
       }));
@@ -494,14 +498,17 @@ export class StatsPanel {
     // Stacked bid blocks
     let cx = pad;
     const colors = ['#7eb87e', '#6aa86a', '#5a985a', '#8ec88e', '#a0d8a0', '#70b070', '#4a904a', '#3a803a'];
+    this._meritBars = new Array(bids.length);
     for (let i = 0; i < bids.length; i++) {
       const b = bids[i];
       const bw = Math.max((b.qty / maxQty) * pw, 1);
-      const bh = Math.max(((b.price - chartBottom) / chartRange) * ph, 3);
-      ctx.fillStyle = colors[i % colors.length];
+      const bh = Math.max(((b.price - chartBottom) / chartRange) * ph, 14);
+      this._meritBars[i] = { cx, y: pad + ph - bh, bw, bh, label: b.label, price: b.price, qty: b.qty };
+      const isHovered = i === this._meritHoverIdx;
+      ctx.fillStyle = isHovered ? '#9ad89a' : colors[i % colors.length];
       ctx.fillRect(cx, pad + ph - bh, bw, bh);
-      ctx.strokeStyle = '#555';
-      ctx.lineWidth = 0.5;
+      ctx.strokeStyle = isHovered ? '#222' : '#555';
+      ctx.lineWidth = isHovered ? 2 : 0.5;
       ctx.strokeRect(cx, pad + ph - bh, bw, bh);
       // Label if wide enough
       if (bw > 20) {
@@ -511,10 +518,20 @@ export class StatsPanel {
         ctx.textBaseline = 'middle';
         ctx.fillText(b.label, cx + bw / 2, pad + ph - bh / 2);
       }
+      // Hover info bar at top of chart
+      if (isHovered) {
+        const priceStr = b.price === -10 ? '\u2014' : '$' + b.price;
+        const info = b.label + '  ' + priceStr + '  ' + Math.round(b.qty) + 'MW';
+        ctx.fillStyle = 'rgba(34,34,34,0.85)';
+        ctx.fillRect(pad, 2, ctx.measureText(info).width + 10, 16);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(info, pad + 5, 4);
+      }
       cx += bw;
-    }
-
-    // Demand vertical line
+    }    // Demand vertical line
     const loadOnly = state.nodes.filter(n => n.type === 'load').reduce((s, l) => s + (l.mw || 0), 0);
     const patSec = (state.simTime || 0) * 720;
     const tod = ((patSec % 86400) / 86400) * 24;
@@ -566,6 +583,35 @@ export class StatsPanel {
       ctx.textAlign = 'left';
       ctx.textBaseline = 'bottom';
       ctx.fillText('SMP $' + smp.toFixed(1), pad + 4, smpY - 3);
+    }
+
+
+    // Merit chart hover - add once
+    if (!this._meritListenersAdded) {
+      this._meritListenersAdded = true;
+      const mc = document.getElementById('merit-canvas');
+      if (mc) {
+        mc.addEventListener('mousemove', (e) => {
+          const rect = mc.getBoundingClientRect();
+          const mx = e.clientX - rect.left;
+          const my = e.clientY - rect.top;
+          let found = -1;
+          for (let i = 0; i < (this._meritBars||[]).length; i++) {
+            const b = this._meritBars[i];
+            if (mx >= b.cx && mx <= b.cx + b.bw && my >= b.y && my <= b.y + b.bh) { found = i; break; }
+          }
+          if (found !== this._meritHoverIdx) {
+            this._meritHoverIdx = found;
+            this.drawMeritOrderChart();
+          }
+        });
+        mc.addEventListener('mouseleave', () => {
+          if (this._meritHoverIdx >= 0) {
+            this._meritHoverIdx = -1;
+            this.drawMeritOrderChart();
+          }
+        });
+      }
     }
 
     ctx.restore();
