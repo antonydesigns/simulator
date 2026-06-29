@@ -51,7 +51,8 @@ export class Controls {
     document.getElementById('pause-btn').addEventListener('click', () => {
       engine.stopSim();
       this.updateControls();
-      if (balanceBtn) balanceBtn.disabled = false;
+      const balBtn = document.getElementById('balance-btn');
+      if (balBtn) balBtn.disabled = false;
     });
 
     // Restart

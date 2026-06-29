@@ -448,7 +448,7 @@ export class StatsPanel {
       .map(g => ({
         price: (g.mode === 'fixed' || g.mode === 'load-follow') ? -10 : (g.bidPrice || 50),
         qty: (g.mode === 'fixed' || g.mode === 'load-follow')
-          ? (g.baselineContract || (g.rating || 100))
+          ? (g.baselineContract || 0)
           : (g.bidQty || g.rating || 100),
         label: g.shortId || g.id.slice(-5),
       }));
@@ -477,10 +477,10 @@ export class StatsPanel {
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    const priceOffset = minPrice < 0 ? Math.abs(minPrice) : 0;
-    const adjustedMax = maxPrice + priceOffset;
+    const chartBottom = minPrice;
+    const chartRange = maxPrice - chartBottom;
     for (let p = 0; p <= 5; p++) {
-      const val = (p / 5) * maxPrice - priceOffset;
+      const val = chartBottom + (p / 5) * chartRange;
       const y = pad + ph - (p / 5) * ph;
       ctx.fillText('$' + Math.round(val), pad - 5, y);
       ctx.strokeStyle = '#eee';
@@ -497,7 +497,7 @@ export class StatsPanel {
     for (let i = 0; i < bids.length; i++) {
       const b = bids[i];
       const bw = Math.max((b.qty / maxQty) * pw, 1);
-      const bh = ((b.price + priceOffset) / adjustedMax) * ph;
+      const bh = Math.max(((b.price - chartBottom) / chartRange) * ph, 3);
       ctx.fillStyle = colors[i % colors.length];
       ctx.fillRect(cx, pad + ph - bh, bw, bh);
       ctx.strokeStyle = '#555';
@@ -551,8 +551,8 @@ export class StatsPanel {
 
     // SMP line
     const smp = state.smp;
-    if (smp != null && smp > 0) {
-      const smpY = pad + ph - (smp / maxPrice) * ph;
+    if (smp != null) {
+      const smpY = pad + ph - ((smp - chartBottom) / chartRange) * ph;
       ctx.strokeStyle = '#d94a4a';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([4, 4]);

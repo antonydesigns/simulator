@@ -449,9 +449,9 @@ export class SimulationEngine {
             }
             let totalTarget;
             if (gen.mode === "merchant") {
-              const droop = gen.droop || 0.04;              const rating = gen.rating || 100;              const dev = (subFreq - f0) / f0;              const govMod = -(1 / droop) * dev * rating;              totalTarget = (gen.baselineContract || 0) + govMod;
+              totalTarget = (gen.baselineContract || 0);
             } else if (gen.mode === "fixed") {
-              const droop = gen.droop || 0.04;              const rating = gen.rating || 100;              const dev = (subFreq - f0) / f0;              const govMod = -(1 / droop) * dev * rating;              totalTarget = (gen.baselineContract || 0) + govMod;
+              totalTarget = (gen.baselineContract || 0);
             } else if (gen.mode === "fcr-only") {
               const droop = gen.droop || 0.04;
               const rating = gen.rating || 100;
@@ -1189,9 +1189,9 @@ const rampUpTC = st.rampUpTC || 0.1;
     const nets = this.findNetworks();
     if (!nets.length) return;
 
-    // Reset all gen baselines, trips, and load shedding
+    // Reset all gen trips and load shedding (baselines preserved for fixed gens)
     for (const gen of state.nodes.filter((n) => n.type === "generator")) {
-      gen.baselineContract = 0;
+      if (gen.mode !== "fixed") gen.baselineContract = 0;
       gen.agcOffset = 0;
       gen.tripped = false;
       gen.freqTimer = 0;
