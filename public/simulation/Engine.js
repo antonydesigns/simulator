@@ -1123,6 +1123,17 @@ const rampUpTC = st.rampUpTC || 0.1;
       if (node.type === "load") delete node._preBlackoutBaseMw;
       if (node.type === "generator") delete node._preBlackStartMode;
     }
+    // Pre-compute demand curve loads for t=0 so dispatch sees correct demand
+    for (const load of state.nodes.filter((n) => n.type === "load")) {
+      if (load.demandCurve) {
+        const mult = this.demandCurve(0);
+        load.mw = Math.round(
+          (load.noiseMin || 100) +
+            ((load.noiseMax || 200) - (load.noiseMin || 100)) * mult
+        );
+        load.baseMw = load.mw;
+      }
+    }
     // Re-dispatch merchant bids and top up with balancing storage
     this.dispatchMeritOrder(true);
     this.callbacks.draw();
