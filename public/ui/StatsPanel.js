@@ -443,16 +443,24 @@ export class StatsPanel {
     ctx.strokeRect(1, 1, w - 2, h - 2);
 
     // Build merit order stack from current generator state
-    const gens = state.nodes.filter(n => n.type === 'generator' && !n.tripped && n.mode !== 'fixed');
+    const genBids = state.nodes
+      .filter(n => n.type === 'generator' && !n.tripped)
+      .map(g => ({
+        price: (g.mode === 'fixed' || g.mode === 'load-follow') ? -10 : (g.bidPrice || 50),
+        qty: (g.mode === 'fixed' || g.mode === 'load-follow')
+          ? (g.baselineContract || (g.rating || 100))
+          : (g.bidQty || g.rating || 100),
+        label: g.shortId || g.id.slice(-5),
+      }));
     const stors = state.nodes.filter(n => n.type === 'storage' && !n.tripped && n.mode === 'merchant' && n.sellTrigger !== 'off');
-    const bids = gens
-      .map(g => ({ price: g.bidPrice || 50, qty: g.bidQty || g.rating || 100, label: g.shortId || g.id.slice(-5) }))
+    const bids = genBids
       .concat(stors.map(s => ({ price: s.sellPrice || 50, qty: Math.min(s.dischargeRate || 50, Math.max(0, s.mw || 0)), label: (s.shortId || s.id.slice(-5)) })))
       .sort((a, b) => a.price - b.price);
     if (!bids.length) { ctx.restore(); return; }
 
     const pad = 40, pw = w - 2 * pad, ph = h - 2 * pad - 5;
     const maxQty = Math.max(bids.reduce((s, b) => s + b.qty, 0), 1);
+    const minPrice = Math.min(...bids.map(b => b.price), -10);
     const maxPrice = Math.max(...bids.map(b => b.price), 50) * 1.2;
 
     // Axes
@@ -469,8 +477,10 @@ export class StatsPanel {
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
+    const priceOffset = minPrice < 0 ? Math.abs(minPrice) : 0;
+    const adjustedMax = maxPrice + priceOffset;
     for (let p = 0; p <= 5; p++) {
-      const val = (p / 5) * maxPrice;
+      const val = (p / 5) * maxPrice - priceOffset;
       const y = pad + ph - (p / 5) * ph;
       ctx.fillText('$' + Math.round(val), pad - 5, y);
       ctx.strokeStyle = '#eee';
@@ -487,7 +497,7 @@ export class StatsPanel {
     for (let i = 0; i < bids.length; i++) {
       const b = bids[i];
       const bw = Math.max((b.qty / maxQty) * pw, 1);
-      const bh = (b.price / maxPrice) * ph;
+      const bh = ((b.price + priceOffset) / adjustedMax) * ph;
       ctx.fillStyle = colors[i % colors.length];
       ctx.fillRect(cx, pad + ph - bh, bw, bh);
       ctx.strokeStyle = '#555';

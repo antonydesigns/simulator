@@ -50,9 +50,9 @@ export class SimulationEngine {
     const allGens = state.nodes.filter(
       (n) => n.type === "generator" && !n.tripped && inNet(n),
     );
-    // Reset baselines for merchant + balancing gens (fixed gens keep manual baseline)
+    // Reset baselines for merchant + balancing gens (fixed keeps user-set baseline, load-follow gets set by dispatch)
     for (const gen of allGens) {
-      if (gen.mode !== "fixed" && gen.mode !== "load-follow") gen.baselineContract = 0;
+      if (gen.mode !== "fixed") gen.baselineContract = 0;
     }
     // Reset merchant storage baselines too
     const allStorages = state.nodes.filter(
@@ -86,6 +86,33 @@ export class SimulationEngine {
       })
       .reduce((s, st) => s + Math.max(0, -(st.mwResponse || 0)), 0);
     const totalLoad = loadTotal + stChargeDemand;
+    let remaining = totalLoad;
+    let smp = 0;
+
+    // --- Step 1: Fixed gens (must-run at baselineContract) ---
+    for (const gen of allGens) {
+      if (gen.mode === "fixed") {
+        const alloc = Math.min(gen.baselineContract || 0, gen.rating || Infinity);
+        gen.baselineContract = alloc;
+        if (writeMw) gen.mw = alloc;
+        remaining -= alloc;
+      }
+    }
+
+    // --- Step 2: Load-follow gens (proportional by rating) ---
+    const lfGens = allGens.filter(g => g.mode === "load-follow");
+    if (lfGens.length > 0 && remaining > 0) {
+      const totalLfRating = lfGens.reduce((s, g) => s + (g.rating || 100), 0);
+      for (const gen of lfGens) {
+        const share = (gen.rating || 100) / totalLfRating;
+        const alloc = Math.round(remaining * share * 10) / 10;
+        gen.baselineContract = Math.min(alloc, gen.rating || Infinity);
+        if (writeMw) gen.mw = gen.baselineContract;
+      }
+      // Recompute remaining from actual allocations
+      const lfTotal = lfGens.reduce((s, g) => s + (g.baselineContract || 0), 0);
+      remaining -= lfTotal;
+    }
 
     // Build merit order: non-fixed gens + merchant storage with sell triggers
     const bids = [];
@@ -124,24 +151,24 @@ export class SimulationEngine {
     // Sort by price (cheapest first)
     bids.sort((a, b) => a.price - b.price);
 
-    let remaining = totalLoad;
-    let smp = 0;
+    // Remaining load goes to bid-based market units
+    let marketRemaining = Math.max(0, remaining);
 
     for (const bid of bids) {
-      const dispatch = Math.min(remaining, bid.qty);
+      const dispatch = Math.min(marketRemaining, bid.qty);
       bid.node.baselineContract = Math.max(0, dispatch);
       if (writeMw && bid.node.type === "generator") bid.node.mw = dispatch;
-      remaining -= dispatch;
+      marketRemaining -= dispatch;
       if (dispatch > 0) smp = bid.price;
     }
 
     // Scarcity price = highest bid in the market
     const maxBidPrice = bids.length > 0 ? bids.reduce((m, b) => Math.max(m, b.price), 0) : 0;
-    state.smp = remaining <= 0 ? smp : maxBidPrice;
+    state.smp = marketRemaining <= 0 ? smp : maxBidPrice;
 
     // Track marginal generators (those at SMP price) for AGC scope
     state.marginalGenIds = new Set();
-    if (remaining <= 0) {
+    if (marketRemaining <= 0) {
       for (const bid of bids) {
         if (bid.node.type === "generator" && (bid.node.baselineContract || 0) > 0 && bid.price === smp) {
           state.marginalGenIds.add(bid.node.id);
@@ -150,15 +177,15 @@ export class SimulationEngine {
     }
     // Under scarcity, marginalGenIds stays empty — AGC falls back to all balancing gens
 
-    // Reset AGC offsets for dispatchable gens (load-follow keeps its accumulated offset)
+    // Reset AGC offsets for merchant gens only (load-follow + balancing keep their accumulated offset)
     for (const gen of allGens) {
-      if (gen.mode !== "load-follow") gen.agcOffset = 0;
+      if (gen.mode === "merchant") gen.agcOffset = 0;
     }
     for (const st of allStorages) st.agcOffset = 0;
     // Reset balancing storages too (not in merchant scope)
     for (const st of state.nodes.filter(n => n.type === "storage" && !n.tripped && n.mode === "balancing" && inNet(n))) st.agcOffset = 0;
 
-    state.marketLoad = totalLoad;
+    state.marketLoad = marketRemaining;
   }
 
   simTick() {
@@ -422,9 +449,9 @@ export class SimulationEngine {
             }
             let totalTarget;
             if (gen.mode === "merchant") {
-              totalTarget = gen.baselineContract || 0;
+              const droop = gen.droop || 0.04;              const rating = gen.rating || 100;              const dev = (subFreq - f0) / f0;              const govMod = -(1 / droop) * dev * rating;              totalTarget = (gen.baselineContract || 0) + govMod;
             } else if (gen.mode === "fixed") {
-              totalTarget = gen.baselineContract || 0;
+              const droop = gen.droop || 0.04;              const rating = gen.rating || 100;              const dev = (subFreq - f0) / f0;              const govMod = -(1 / droop) * dev * rating;              totalTarget = (gen.baselineContract || 0) + govMod;
             } else if (gen.mode === "fcr-only") {
               const droop = gen.droop || 0.04;
               const rating = gen.rating || 100;
@@ -1201,16 +1228,31 @@ const rampUpTC = st.rampUpTC || 0.1;
 
       const totalDemand = loads.reduce((sum, n) => sum + (n.mw || 0), 0);
       const fixedGens = gens.filter((g) => g.mode === "fixed");
-      const flexGens = gens.filter((g) => g.mode !== "fixed");
+      const flexGens = gens.filter((g) => g.mode !== "fixed" && g.mode !== "load-follow");
+      const lfGens = gens.filter((g) => g.mode === "load-follow");
       const notFixedStor = storages.filter((s) => s.mode !== "fixed");
 
       const fixedSupply = fixedGens.reduce(
-        (sum, g) => sum + Math.min(g.dispatchTarget || 0, g.rating || Infinity),
+        (sum, g) => sum + Math.min(g.baselineContract || 0, g.rating || Infinity),
         0,
       );
       let remaining = totalDemand - fixedSupply;
 
-      // Distribute proportionally across flexible gens AND storage
+      // Load-follow gens get proportional share of remaining
+      if (lfGens.length > 0 && remaining > 0) {
+        const totalLfRating = lfGens.reduce((s, g) => s + (g.rating || 100), 0);
+        for (const gen of lfGens) {
+          const share = (gen.rating || 100) / totalLfRating;
+          gen.baselineContract = Math.min(
+            Math.round(remaining * share * 10) / 10,
+            gen.rating || Infinity,
+          );
+          gen.mw = gen.baselineContract;
+        }
+        remaining -= lfGens.reduce((s, g) => s + (g.baselineContract || 0), 0);
+      }
+
+      // Distribute remaining proportionally across flexible gens AND storage
       // Exclude storage with insufficient SoC (can't discharge what it doesn't have)
       const dispatchableStor = notFixedStor.filter(
         (s) => s.mw === undefined || s.mw > 0,
