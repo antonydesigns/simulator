@@ -40,7 +40,7 @@ export class SimulationEngine {
     return daily * weekend;
   }
 
-  dispatchMeritOrder() {
+  dispatchMeritOrder(topUpBalancing = false) {
     const { state, sim } = this.store;
     const { draw, updateControls, updateStatsPanel } = this.callbacks;
 
@@ -111,6 +111,7 @@ export class SimulationEngine {
     for (const bid of bids) {
       const dispatch = Math.min(remaining, bid.qty);
       bid.node.baselineContract = Math.max(0, dispatch);
+      if (bid.node.type === "generator") bid.node.mw = dispatch;
       remaining -= dispatch;
       if (dispatch > 0) smp = bid.price;
     }
@@ -122,6 +123,33 @@ export class SimulationEngine {
     // Sync merchant storage mwResponse to baselineContract (balanceGrid may have set differently)
     for (const st of allStorages) {
       st.mwResponse = st.baselineContract || 0;
+    }
+
+    // Top up with balancing storage if merchant bids fall short
+    if (remaining > 0 && topUpBalancing) {
+      const balancingStorages = state.nodes.filter(
+        (n) => n.type === "storage" && !n.tripped && n.mode === "balancing"
+      );
+      if (balancingStorages.length > 0) {
+        // Reset balancing storage baselines
+        for (const st of balancingStorages) {
+          st.baselineContract = 0;
+          st.mwResponse = 0;
+        }
+        const totalRate = balancingStorages.reduce(
+          (s, st) => s + (st.dischargeRate || 50), 0
+        );
+        if (totalRate > 0) {
+          for (const st of balancingStorages) {
+            const share = (st.dischargeRate || 50) / totalRate;
+            let alloc = Math.round(remaining * share * 10) / 10;
+            alloc = Math.min(alloc, st.dischargeRate || 50);
+            st.baselineContract = alloc;
+            st.mwResponse = alloc;
+          }
+        }
+        remaining = 0;
+      }
     }
     state.marketLoad = totalLoad;
   }
@@ -1073,6 +1101,8 @@ const rampUpTC = st.rampUpTC || 0.1;
       if (node.type === "load") delete node._preBlackoutBaseMw;
       if (node.type === "generator") delete node._preBlackStartMode;
     }
+    // Re-dispatch merchant bids and top up with balancing storage
+    this.dispatchMeritOrder(true);
     this.callbacks.draw();
     this.callbacks.updateControls();
     this.callbacks.updateStatsPanel();
