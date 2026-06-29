@@ -1125,7 +1125,7 @@ const rampUpTC = st.rampUpTC || 0.1;
     }
     // Pre-compute demand curve loads for t=0 so dispatch sees correct demand
     for (const load of state.nodes.filter((n) => n.type === "load")) {
-      if (load.demandCurve) {
+      if (load.noiseEnabled) {
         const mult = this.demandCurve(0);
         load.mw = Math.round(
           (load.noiseMin || 100) +
