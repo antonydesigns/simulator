@@ -125,27 +125,49 @@ export class SimulationEngine {
       st.mwResponse = st.baselineContract || 0;
     }
 
-    // Top up with balancing storage if merchant bids fall short
+    // Top up with balancing assets if merchant bids fall short
     if (remaining > 0 && topUpBalancing) {
+      // Collect balancing generators (spare capacity after market dispatch)
+      const balancingGens = state.nodes.filter(
+        (n) => n.type === "generator" && !n.tripped && n.mode === "balancing"
+      );
+      // Collect balancing storage
       const balancingStorages = state.nodes.filter(
         (n) => n.type === "storage" && !n.tripped && n.mode === "balancing"
       );
-      if (balancingStorages.length > 0) {
-        // Reset balancing storage baselines
+
+      // Build asset list with available balancing capacity
+      const balancingAssets = [];
+      for (const gen of balancingGens) {
+        const spare = (gen.rating || 100) - (gen.baselineContract || 0);
+        if (spare > 0) balancingAssets.push({ node: gen, capacity: spare, isGen: true });
+      }
+      for (const st of balancingStorages) {
+        const rate = st.dischargeRate || 50;
+        balancingAssets.push({ node: st, capacity: rate, isGen: false });
+      }
+
+      if (balancingAssets.length > 0) {
+        // Reset balancing storage baselines (gens keep their market dispatch baseline)
         for (const st of balancingStorages) {
           st.baselineContract = 0;
           st.mwResponse = 0;
         }
-        const totalRate = balancingStorages.reduce(
-          (s, st) => s + (st.dischargeRate || 50), 0
-        );
-        if (totalRate > 0) {
-          for (const st of balancingStorages) {
-            const share = (st.dischargeRate || 50) / totalRate;
+        const totalCapacity = balancingAssets.reduce((s, a) => s + a.capacity, 0);
+        if (totalCapacity > 0) {
+          for (const asset of balancingAssets) {
+            const share = asset.capacity / totalCapacity;
             let alloc = Math.round(remaining * share * 10) / 10;
-            alloc = Math.min(alloc, st.dischargeRate || 50);
-            st.baselineContract = alloc;
-            st.mwResponse = alloc;
+            alloc = Math.min(alloc, asset.capacity);
+            if (asset.isGen) {
+              // Add balancing allocation on top of market dispatch
+              asset.node.baselineContract = (asset.node.baselineContract || 0) + alloc;
+              asset.node.mw = asset.node.baselineContract;
+            } else {
+              // Storage baselines are fully replaced by balancing allocation
+              asset.node.baselineContract = alloc;
+              asset.node.mwResponse = alloc;
+            }
           }
         }
         remaining = 0;
@@ -229,7 +251,7 @@ export class SimulationEngine {
       const patSec = sim.simTime * 720;
       if (patSec - (sim.lastMarketPat || 0) >= 900) {
         sim.lastMarketPat = patSec;
-        this.dispatchMeritOrder();
+        this.dispatchMeritOrder(true);
         if (meritChartVisible) drawMeritOrderChart();
       }
 
