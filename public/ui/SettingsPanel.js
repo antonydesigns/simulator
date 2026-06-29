@@ -176,6 +176,18 @@ export class SettingsPanel {
     });
     droopSlider.addEventListener('change', () => this.persister.persist());
 
+    // Ramp TC sliders
+    const rampUpSlider = panel.querySelector('.ramp-up-slider'), rampUpVal = panel.querySelector('.ramp-up-value');
+    const rampDownSlider = panel.querySelector('.ramp-down-slider'), rampDownVal = panel.querySelector('.ramp-down-value');
+    if (rampUpSlider) {
+      rampUpSlider.addEventListener('input', () => { const v = parseFloat(rampUpSlider.value); rampUpVal.textContent = v.toFixed(2) + 's'; node.rampUpTC = v; });
+      rampUpSlider.addEventListener('change', () => this.persister.persist());
+    }
+    if (rampDownSlider) {
+      rampDownSlider.addEventListener('input', () => { const v = parseFloat(rampDownSlider.value); rampDownVal.textContent = v.toFixed(2) + 's'; node.rampDownTC = v; });
+      rampDownSlider.addEventListener('change', () => this.persister.persist());
+    }
+
     // Turbine TC slider
     const tcSlider = panel.querySelector('.tc-slider');
     const tcVal = panel.querySelector('.tc-value');
@@ -257,8 +269,56 @@ export class SettingsPanel {
         <div class="storage-fixed-group" style="display:${mode === 'fixed' ? '' : 'none'}">
           <div class="settings-row"><label class="settings-label">Target</label><div class="settings-slider-group"><input type="range" class="fixed-target-slider" min="${-chgR}" max="${dchgR}" step="1" value="${ft}"><span class="fixed-target-value">${ft >= 0 ? '+' : ''}${ft} MW</span></div></div>
         </div>
+        <div class="storage-merchant-group" style="display:${mode === 'merchant' ? '' : 'none'};border-top:1px solid #333;margin-top:6px;padding-top:6px">
+          <div class="settings-row" style="font-size:11px;color:#888;font-weight:600;margin-bottom:2px">-- Sell Contract --</div>
+          <div class="settings-row">
+            <label class="settings-label" style="font-size:11px">Trigger</label>
+            <select class="sell-trigger-select" style="flex:1;padding:2px 4px;background:#222;color:#ccc;border:1px solid #444;border-radius:3px;font-size:11px">
+              <option value="off" ${(node.sellTrigger||'off')==='off'?'selected':''}>Off</option>
+              <option value="price" ${(node.sellTrigger||'off')==='price'?'selected':''}>Price</option>
+              <option value="time" ${(node.sellTrigger||'off')==='time'?'selected':''}>Time</option>
+              <option value="both" ${(node.sellTrigger||'off')==='both'?'selected':''}>Price or Time</option>
+            </select>
+          </div>
+          <div class="settings-row sell-price-row" style="display:${(node.sellTrigger||'off')==='price'||(node.sellTrigger||'off')==='both'?'':'none'}">
+            <label class="settings-label" style="font-size:11px">Min Sell Price</label>
+            <div class="settings-slider-group"><input type="range" class="sell-price-slider" min="1" max="200" step="1" value="${node.sellPrice||50}"><span class="sell-price-value">${node.sellPrice||50} $/MWh</span></div>
+          </div>
+          <div class="settings-row sell-time-row" style="display:${(node.sellTrigger||'off')==='time'||(node.sellTrigger||'off')==='both'?'':'none'}">
+            <label class="settings-label" style="font-size:11px">Start</label>
+            <div class="settings-slider-group" style="gap:4px;flex-wrap:wrap">
+              <input type="range" class="sell-start-slider" min="0" max="23" step="1" value="${node.sellStartHour||17}" style="width:50px"><span class="sell-start-value">${((node.sellStartHour||17)+'').padStart(2,'0')}:00</span>
+              <span style="color:#666;font-size:11px">for</span>
+              <input type="range" class="sell-dur-slider" min="1" max="24" step="1" value="${node.sellDuration||4}" style="width:50px"><span class="sell-dur-value">${node.sellDuration||4}h</span>
+            </div>
+          </div>
+          <div class="settings-row" style="font-size:11px;color:#888;font-weight:600;margin:4px 0 2px">-- Buy Contract --</div>
+          <div class="settings-row">
+            <label class="settings-label" style="font-size:11px">Trigger</label>
+            <select class="buy-trigger-select" style="flex:1;padding:2px 4px;background:#222;color:#ccc;border:1px solid #444;border-radius:3px;font-size:11px">
+              <option value="off" ${(node.buyTrigger||'off')==='off'?'selected':''}>Off</option>
+              <option value="price" ${(node.buyTrigger||'off')==='price'?'selected':''}>Price</option>
+              <option value="time" ${(node.buyTrigger||'off')==='time'?'selected':''}>Time</option>
+              <option value="both" ${(node.buyTrigger||'off')==='both'?'selected':''}>Price or Time</option>
+            </select>
+          </div>
+          <div class="settings-row buy-price-row" style="display:${(node.buyTrigger||'off')==='price'||(node.buyTrigger||'off')==='both'?'':'none'}">
+            <label class="settings-label" style="font-size:11px">Max Buy Price</label>
+            <div class="settings-slider-group"><input type="range" class="buy-price-slider" min="1" max="200" step="1" value="${node.buyPrice||20}"><span class="buy-price-value">${node.buyPrice||20} $/MWh</span></div>
+          </div>
+          <div class="settings-row buy-time-row" style="display:${(node.buyTrigger||'off')==='time'||(node.buyTrigger||'off')==='both'?'':'none'}">
+            <label class="settings-label" style="font-size:11px">Start</label>
+            <div class="settings-slider-group" style="gap:4px;flex-wrap:wrap">
+              <input type="range" class="buy-start-slider" min="0" max="23" step="1" value="${node.buyStartHour||3}" style="width:50px"><span class="buy-start-value">${((node.buyStartHour||3)+'').padStart(2,'0')}:00</span>
+              <span style="color:#666;font-size:11px">for</span>
+              <input type="range" class="buy-dur-slider" min="1" max="24" step="1" value="${node.buyDuration||4}" style="width:50px"><span class="buy-dur-value">${node.buyDuration||4}h</span>
+            </div>
+          </div>
+        </div>
         <div class="settings-row"><label class="settings-label">Discharge Rate</label><div class="settings-slider-group"><input type="range" class="discharge-slider" min="1" max="500" step="1" value="${dchgR}"><span class="discharge-value">${dchgR} MW</span></div></div>
         <div class="settings-row"><label class="settings-label">Charge Rate</label><div class="settings-slider-group"><input type="range" class="charge-slider" min="1" max="500" step="1" value="${chgR}"><span class="charge-value">${chgR} MW</span></div></div>
+        <div class="settings-row"><label class="settings-label">Ramp Up TC</label><div class="settings-slider-group"><input type="range" class="ramp-up-slider" min="0.05" max="60" step="0.05" value="${node.rampUpTC||0.1}"><span class="ramp-up-value">${(node.rampUpTC||0.1).toFixed(2)}s</span></div></div>
+        <div class="settings-row"><label class="settings-label">Ramp Down TC</label><div class="settings-slider-group"><input type="range" class="ramp-down-slider" min="0.05" max="60" step="0.05" value="${node.rampDownTC||0.1}"><span class="ramp-down-value">${(node.rampDownTC||0.1).toFixed(2)}s</span></div></div>
         <div class="settings-row"><label class="settings-label">Max Capacity</label><div class="settings-slider-group"><input type="range" class="capacity-slider" min="10" max="1000" step="10" value="${cap}"><span class="capacity-value">${cap} MWh</span></div></div>
         <div class="settings-row sep-top"><label class="settings-label">Mode</label>
           <div class="settings-slider-group">
@@ -267,6 +327,7 @@ export class SettingsPanel {
               <option value="fcr-only" ${mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option>
               <option value="grid-forming" ${mode === 'grid-forming' ? 'selected' : ''}>Grid Forming</option>
               <option value="fixed" ${mode === 'fixed' ? 'selected' : ''}>Fixed</option>
+              <option value="merchant" ${mode === 'merchant' ? 'selected' : ''}>Merchant</option>
             </select>
           </div>
         </div>
@@ -279,6 +340,7 @@ export class SettingsPanel {
     entry.modeSelect = panel.querySelector('.storage-mode-select');
     entry.fcrGroup = panel.querySelector('.storage-fcr-group');
     entry.fixedGroup = panel.querySelector('.storage-fixed-group');
+    entry.merchantGroup = panel.querySelector('.storage-merchant-group');
 
     // SoC slider
     const socSlider = panel.querySelector('.soc-slider');
@@ -309,6 +371,7 @@ export class SettingsPanel {
       node.mode = entry.modeSelect.value;
       entry.fcrGroup.style.display = (node.mode === 'balancing' || node.mode === 'fcr-only' || node.mode === 'grid-forming') ? '' : 'none';
       entry.fixedGroup.style.display = node.mode === 'fixed' ? '' : 'none';
+      if (entry.merchantGroup) entry.merchantGroup.style.display = node.mode === 'merchant' ? '' : 'none';
       if (entry.neutralGroup) entry.neutralGroup.style.display = node.mode === 'balancing' ? '' : 'none';
       this.persister.persist();
     });
@@ -343,6 +406,18 @@ export class SettingsPanel {
     droopSlider.addEventListener('input', () => { const v = parseFloat(droopSlider.value); droopVal.textContent = v + '%'; node.droop = v / 100; });
     droopSlider.addEventListener('change', () => this.persister.persist());
 
+    // Ramp TC sliders
+    const rampUpSlider = panel.querySelector('.ramp-up-slider'), rampUpVal = panel.querySelector('.ramp-up-value');
+    const rampDownSlider = panel.querySelector('.ramp-down-slider'), rampDownVal = panel.querySelector('.ramp-down-value');
+    if (rampUpSlider) {
+      rampUpSlider.addEventListener('input', () => { const v = parseFloat(rampUpSlider.value); rampUpVal.textContent = v.toFixed(2) + 's'; node.rampUpTC = v; });
+      rampUpSlider.addEventListener('change', () => this.persister.persist());
+    }
+    if (rampDownSlider) {
+      rampDownSlider.addEventListener('input', () => { const v = parseFloat(rampDownSlider.value); rampDownVal.textContent = v.toFixed(2) + 's'; node.rampDownTC = v; });
+      rampDownSlider.addEventListener('change', () => this.persister.persist());
+    }
+
     // Fixed target slider
     const fixedSlider = panel.querySelector('.fixed-target-slider');
     const fixedVal = panel.querySelector('.fixed-target-value');
@@ -363,6 +438,65 @@ export class SettingsPanel {
     const capSlider = panel.querySelector('.capacity-slider'), capV = panel.querySelector('.capacity-value');
     capSlider.addEventListener('input', () => { const v = parseInt(capSlider.value, 10); capV.textContent = v + ' MWh'; node.maxCapacity = v; if (node.mw > v) { node.mw = v; entry.socEl.textContent = v.toFixed(2) + ' MWh'; socSlider.max = v; } });
     capSlider.addEventListener('change', () => this.persister.persist());
+
+    // Merchant controls
+    const sellTrigger = panel.querySelector('.sell-trigger-select');
+    const buyTrigger = panel.querySelector('.buy-trigger-select');
+    const sellPriceRow = panel.querySelector('.sell-price-row');
+    const sellTimeRow = panel.querySelector('.sell-time-row');
+    const buyPriceRow = panel.querySelector('.buy-price-row');
+    const buyTimeRow = panel.querySelector('.buy-time-row');
+
+    if (sellTrigger) {
+      function updateSellVisibility() {
+        const v = sellTrigger.value;
+        if (sellPriceRow) sellPriceRow.style.display = (v === 'price' || v === 'both') ? '' : 'none';
+        if (sellTimeRow) sellTimeRow.style.display = (v === 'time' || v === 'both') ? '' : 'none';
+      }
+      function updateBuyVisibility() {
+        const v = buyTrigger.value;
+        if (buyPriceRow) buyPriceRow.style.display = (v === 'price' || v === 'both') ? '' : 'none';
+        if (buyTimeRow) buyTimeRow.style.display = (v === 'time' || v === 'both') ? '' : 'none';
+      }
+      sellTrigger.addEventListener('change', () => { node.sellTrigger = sellTrigger.value; updateSellVisibility(); this.persister.persist(); });
+      buyTrigger.addEventListener('change', () => { node.buyTrigger = buyTrigger.value; updateBuyVisibility(); this.persister.persist(); });
+
+      const sellPriceSlider = panel.querySelector('.sell-price-slider'), sellPriceVal = panel.querySelector('.sell-price-value');
+      if (sellPriceSlider) {
+        sellPriceSlider.addEventListener('input', () => { const v = parseInt(sellPriceSlider.value, 10); sellPriceVal.textContent = v + ' $/MWh'; node.sellPrice = v; });
+        sellPriceSlider.addEventListener('change', () => this.persister.persist());
+      }
+
+      const sellStartSlider = panel.querySelector('.sell-start-slider'), sellStartVal = panel.querySelector('.sell-start-value');
+      if (sellStartSlider) {
+        sellStartSlider.addEventListener('input', () => { const v = parseInt(sellStartSlider.value, 10); sellStartVal.textContent = (v+'').padStart(2,'0') + ':00'; node.sellStartHour = v; });
+        sellStartSlider.addEventListener('change', () => this.persister.persist());
+      }
+
+      const sellDurSlider = panel.querySelector('.sell-dur-slider'), sellDurVal = panel.querySelector('.sell-dur-value');
+      if (sellDurSlider) {
+        sellDurSlider.addEventListener('input', () => { const v = parseInt(sellDurSlider.value, 10); sellDurVal.textContent = v + 'h'; node.sellDuration = v; });
+        sellDurSlider.addEventListener('change', () => this.persister.persist());
+      }
+
+      const buyPriceSlider = panel.querySelector('.buy-price-slider'), buyPriceVal = panel.querySelector('.buy-price-value');
+      if (buyPriceSlider) {
+        buyPriceSlider.addEventListener('input', () => { const v = parseInt(buyPriceSlider.value, 10); buyPriceVal.textContent = v + ' $/MWh'; node.buyPrice = v; });
+        buyPriceSlider.addEventListener('change', () => this.persister.persist());
+      }
+
+      const buyStartSlider = panel.querySelector('.buy-start-slider'), buyStartVal = panel.querySelector('.buy-start-value');
+      if (buyStartSlider) {
+        buyStartSlider.addEventListener('input', () => { const v = parseInt(buyStartSlider.value, 10); buyStartVal.textContent = (v+'').padStart(2,'0') + ':00'; node.buyStartHour = v; });
+        buyStartSlider.addEventListener('change', () => this.persister.persist());
+      }
+
+      const buyDurSlider = panel.querySelector('.buy-dur-slider'), buyDurVal = panel.querySelector('.buy-dur-value');
+      if (buyDurSlider) {
+        buyDurSlider.addEventListener('input', () => { const v = parseInt(buyDurSlider.value, 10); buyDurVal.textContent = v + 'h'; node.buyDuration = v; });
+        buyDurSlider.addEventListener('change', () => this.persister.persist());
+      }
+    }
 
   } else {
     panel.innerHTML = `
@@ -388,6 +522,10 @@ export class SettingsPanel {
           <div class="settings-slider-group"><input type="range" class="noise-pct-slider" min="0" max="100" step="1" value="${node.noisePct || 10}"><span class="noise-pct-value">${node.noisePct || 10}%</span></div>
         </div>
         <div class="settings-row noise-row"${node.noiseEnabled ? '' : ' style="display:none"'}>
+          <label class="settings-label">Growth per cycle</label>
+          <div class="settings-slider-group"><input type="range" class="growth-slider" min="0" max="10" step="0.5" value="${node.demandGrowthPct || 0}"><span class="growth-value">${node.demandGrowthPct || 0}%</span></div>
+        </div>
+        <div class="settings-row noise-row"${node.noiseEnabled ? '' : ' style="display:none"'}>
           <canvas class="demand-preview" width="320" height="80" data-node-id="${node.id}"></canvas>
         </div>
         <div class="settings-row manual-row"${node.noiseEnabled ? ' style="display:none"' : ''}>
@@ -395,11 +533,6 @@ export class SettingsPanel {
           <div class="settings-slider-group"><input type="range" class="mw-slider" min="0" max="500" step="10" value="${node.mw || 10}"><span class="mw-value">${node.mw || 10}</span></div>
         </div>
       </div>
-      <div class="settings-row shed-row">
-          <label class="settings-label">UFLS Shed</label>
-          <span class="shed-status">SHD ${Math.round((node.shedPct || 0) * 100)}%</span>
-          <button class="shed-restore-btn">Restore</button>
-        </div>
       <div class="settings-resize-handle"></div>`;
 
     const slider = panel.querySelector('.mw-slider'), valEl = panel.querySelector('.mw-value');
@@ -454,28 +587,22 @@ export class SettingsPanel {
       noisePctSlider.addEventListener('change', () => this.persister.persist());
     }
 
+    const growthSlider = panel.querySelector('.growth-slider');
+    const growthVal = panel.querySelector('.growth-value');
+    if (growthSlider) {
+      growthSlider.addEventListener('input', () => {
+        const v = parseFloat(growthSlider.value);
+        growthVal.textContent = v + '%';
+        node.demandGrowthPct = v;
+        this.renderer.draw();
+      });
+      growthSlider.addEventListener('change', () => this.persister.persist());
+    }
+
     // Draw the preview canvas on open
     const previewCanvas = panel.querySelector('.demand-preview');
     if (previewCanvas) this.renderer.drawLoadCurvePreview(previewCanvas, node);
 
-    // Load shed restore
-    const shedRow = panel.querySelector('.shed-row');
-    // Hide shed row initially if no active shedding
-    if (shedRow) shedRow.style.display = (node.shedPct || 0) > 0 ? '' : 'none';
-    const shedRestoreBtn = panel.querySelector('.shed-restore-btn');
-    if (shedRestoreBtn) {
-      shedRestoreBtn.addEventListener('click', () => {
-        node.shedPct = 0;
-        node.shedTimer = 0;
-        if (!node.noiseEnabled) {
-          node.mw = node.baseMw || node.mw || 10;
-        }
-        if (shedRow) shedRow.style.display = 'none';
-        // Don't re-balance — let FCR/AGC handle the restored load naturally
-        this.renderer.draw();
-        this.persister.persist();
-      });
-    }
   }
 
   const count = Object.keys(openPanels).length;
@@ -497,10 +624,6 @@ export class SettingsPanel {
     for (const [nodeId, entry] of Object.entries(openPanels)) {
       const node = this.store.state.nodes.find(n => n.id === nodeId);
       if (!node || node.type !== 'load') continue;
-      const shedRow = entry.panel.querySelector('.shed-row');
-      if (!shedRow) continue;
-      const isShed = (node.shedPct || 0) > 0;
-      shedRow.style.display = isShed ? '' : 'none';
     }
   }
 

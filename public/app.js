@@ -12,7 +12,10 @@ const store = new Store();
 const renderer = new Renderer(store);
 const statsPanel = new StatsPanel(store);
 const engine = new SimulationEngine(store, {
-  draw: () => { renderer.draw(); settingsPanel.refreshNodePanels(); },
+  draw: () => {
+    renderer.draw();
+    settingsPanel.refreshNodePanels();
+  },
   updateControls: () => {},
   updateStatsPanel: statsPanel.update.bind(statsPanel),
   drawFreqChart: () => statsPanel.drawFreqChart(),
@@ -20,8 +23,20 @@ const engine = new SimulationEngine(store, {
 });
 renderer.engine = engine;
 const persister = new Persister(store, engine);
-const balanceModal = new BalanceModal(store, engine, persister, renderer, statsPanel);
-const controls = new Controls(store, engine, persister, statsPanel, balanceModal);
+const balanceModal = new BalanceModal(
+  store,
+  engine,
+  persister,
+  renderer,
+  statsPanel,
+);
+const controls = new Controls(
+  store,
+  engine,
+  persister,
+  statsPanel,
+  balanceModal,
+);
 engine.callbacks.updateControls = controls.updateControls.bind(controls);
 engine.onPersist = () => persister.persist();
 const settingsPanel = new SettingsPanel(
@@ -45,7 +60,6 @@ const interactions = new Interactions(
 async function init() {
   await persister.load();
   engine.balanceGrid();
-
   renderer.resizeCanvas();
   renderer.draw();
   controls.updateControls();

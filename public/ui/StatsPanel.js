@@ -444,8 +444,10 @@ export class StatsPanel {
 
     // Build merit order stack from current generator state
     const gens = state.nodes.filter(n => n.type === 'generator' && !n.tripped && n.mode !== 'fixed');
+    const stors = state.nodes.filter(n => n.type === 'storage' && !n.tripped && n.mode === 'merchant' && n.sellTrigger !== 'off');
     const bids = gens
       .map(g => ({ price: g.bidPrice || 50, qty: g.bidQty || g.rating || 100, label: g.shortId || g.id.slice(-5) }))
+      .concat(stors.map(s => ({ price: s.sellPrice || 50, qty: Math.min(s.dischargeRate || 50, Math.max(0, s.mw || 0)), label: (s.shortId || s.id.slice(-5)) })))
       .sort((a, b) => a.price - b.price);
     if (!bids.length) { ctx.restore(); return; }
 
@@ -503,7 +505,9 @@ export class StatsPanel {
     }
 
     // Demand vertical line
-    const totalLoad = state.nodes.filter(n => n.type === 'load').reduce((s, l) => s + (l.mw || 0), 0);
+    const loadOnly = state.nodes.filter(n => n.type === 'load').reduce((s, l) => s + (l.mw || 0), 0);
+    const stChargeDemand = state.nodes.filter(n => n.type === 'storage' && !n.tripped && n.mode === 'merchant' && n.buyTrigger !== 'off').reduce((s, st) => s + (st.chargeRate || 50), 0);
+    const totalLoad = loadOnly + stChargeDemand;
     const demandX = pad + Math.min((totalLoad / maxQty) * pw, pw);
     ctx.strokeStyle = '#4a90d9';
     ctx.lineWidth = 1.5;

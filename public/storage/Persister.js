@@ -65,6 +65,7 @@ export class Persister {
           if (n.noiseMin === undefined) n.noiseMin = 100;
           if (n.noiseMax === undefined) n.noiseMax = 200;
           if (n.noisePct === undefined) n.noisePct = 10;
+          if (n.demandGrowthPct === undefined) n.demandGrowthPct = 0;
         }
         if (n.type === 'storage') {
           if (n.chargeRate === undefined) n.chargeRate = 500;
@@ -76,6 +77,16 @@ export class Persister {
           if (n.fcrHeadroom === undefined) n.fcrHeadroom = 10;
           if (n.droop === undefined) n.droop = 0.04;
           if (n.fixedTarget === undefined) n.fixedTarget = 0;
+          if (n.sellTrigger === undefined) n.sellTrigger = "off";
+          if (n.sellPrice === undefined) n.sellPrice = 50;
+          if (n.sellStartHour === undefined) n.sellStartHour = 17;
+          if (n.sellDuration === undefined) n.sellDuration = 4;
+          if (n.buyTrigger === undefined) n.buyTrigger = "off";
+          if (n.buyPrice === undefined) n.buyPrice = 20;
+          if (n.buyStartHour === undefined) n.buyStartHour = 3;
+          if (n.buyDuration === undefined) n.buyDuration = 4;
+          if (n.rampUpTC === undefined) n.rampUpTC = 0.1;
+          if (n.rampDownTC === undefined) n.rampDownTC = 0.1;
           // Assign shortId if missing
           if (!n.shortId) n.shortId = this.store.shortId(n.type);
         }
