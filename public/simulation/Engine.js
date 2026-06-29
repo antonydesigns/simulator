@@ -98,8 +98,8 @@ export class SimulationEngine {
       }
       const dr = st.dischargeRate || 50;
       const soc = st.mw || 0;
-      const qty = Math.min(dr, Math.max(0, soc));
-      if (qty <= 0) continue;
+      if (soc <= 0) continue;
+      const qty = dr;
       bids.push({ node: st, price: st.sellPrice || 50, qty });
     }
     // Sort by price (cheapest first)
