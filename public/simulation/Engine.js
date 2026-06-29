@@ -118,6 +118,11 @@ export class SimulationEngine {
     // Scarcity price = highest bid in the market
     const maxBidPrice = bids.length > 0 ? bids.reduce((m, b) => Math.max(m, b.price), 0) : 0;
     state.smp = remaining <= 0 ? smp : maxBidPrice;
+
+    // Sync merchant storage mwResponse to baselineContract (balanceGrid may have set differently)
+    for (const st of allStorages) {
+      st.mwResponse = st.baselineContract || 0;
+    }
     state.marketLoad = totalLoad;
   }
 
