@@ -150,8 +150,10 @@ export class SimulationEngine {
     }
     // Under scarcity, marginalGenIds stays empty — AGC falls back to all balancing gens
 
-    // Reset AGC offsets (dispatch is the re-dispatch, start clean)
-    for (const gen of allGens) gen.agcOffset = 0;
+    // Reset AGC offsets for dispatchable gens (load-follow keeps its accumulated offset)
+    for (const gen of allGens) {
+      if (gen.mode !== "load-follow") gen.agcOffset = 0;
+    }
     for (const st of allStorages) st.agcOffset = 0;
     // Reset balancing storages too (not in merchant scope)
     for (const st of state.nodes.filter(n => n.type === "storage" && !n.tripped && n.mode === "balancing" && inNet(n))) st.agcOffset = 0;
@@ -741,7 +743,10 @@ const rampUpTC = st.rampUpTC || 0.1;
           }
 
           // --- Step 8: AGC (gens) ---
-          const balancingGens = gens.filter((g) => g.mode === "balancing" && (state.marginalGenIds.size === 0 || state.marginalGenIds.has(g.id)));
+          const balancingGens = gens.filter((g) =>
+            (g.mode === "balancing" && (state.marginalGenIds.size === 0 || state.marginalGenIds.has(g.id))) ||
+            g.mode === "load-follow"
+          );
           const freqErr = f0 - subFreqRef.value;
           if (balancingGens.length > 0) {
             const agcRateLimit = 5;
