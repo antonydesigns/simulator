@@ -418,7 +418,9 @@ export class SimulationEngine {
             const rating = gen.rating || 100;
             const dev = (subFreq - f0) / f0;
             const govMod = -(1 / droop) * dev * rating;
-            if (gen.mode === "merchant" || gen.mode === "fixed") {
+            if (gen.mode === "fixed") {
+              totalTarget = (gen.baselineContract || 0);
+            } else if (gen.mode === "merchant") {
               totalTarget = (gen.baselineContract || 0) + (gen.fcrEnabled !== false ? govMod : 0);
             } else {
               totalTarget =
