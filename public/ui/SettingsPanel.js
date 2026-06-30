@@ -356,7 +356,6 @@ export class SettingsPanel {
             <div style="display:flex;gap:10px;font-size:11px;color:#999;padding-left:2px">
               <span>Base <span class="stor-output-base">${(node.baselineContract || 0) >= 0 ? '+' : ''}${Math.round(node.baselineContract || 0)}</span></span>
               <span>FCR <span class="stor-output-fcr">+${Math.round(-(1 / (node.droop || 0.04)) * ((state.frequency || 50) - 50) / 50 * Math.max(dchgR, chgR))}</span></span>
-              <span>RR <span class="stor-output-rr">${(node.freqRestore || 0) >= 0 ? '+' : ''}${Math.round(node.freqRestore || 0)}</span></span>
               <span>AGC <span class="stor-output-agc">${(node.agcOffset || 0) >= 0 ? '+' : ''}${Math.round(node.agcOffset || 0)}</span></span>
             </div>
           </div>

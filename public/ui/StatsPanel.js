@@ -148,7 +148,7 @@ export class StatsPanel {
         if (stExpanded) {
           html += '<div class="stats-breakdown-row">';
           html += '<span class="stats-toggle" data-toggle="' + st.id + '">▼ </span>';
-          html += '<span class="stats-breakdown-value">base ' + Math.round(bc) + ' + FCR ' + (sGovMod >= 0 ? '+' : '') + Math.round(sGovMod) + ' + RR ' + ((st.freqRestore || 0) >= 0 ? '+' : '') + Math.round(st.freqRestore || 0) + ' + AGC ' + (sAgc >= 0 ? '+' : '') + Math.round(sAgc) + '</span>';
+          html += '<span class="stats-breakdown-value">base ' + Math.round(bc) + ' + FCR ' + (sGovMod >= 0 ? '+' : '') + Math.round(sGovMod) + ' + AGC ' + (sAgc >= 0 ? '+' : '') + Math.round(sAgc) + '</span>';
           html += '</div>';
         } else {
           html += '<div class="stats-breakdown-row">';

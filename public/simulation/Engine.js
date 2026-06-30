@@ -456,11 +456,8 @@ export class SimulationEngine {
               const dev = (subFreq - f0) / f0;
               const effectiveRating = dr;
               const govMod = -(1 / droop) * dev * effectiveRating;
-              st.freqRestore =
-                (st.freqRestore || 0) + 20 * (f0 - subFreq) * physicsDt;
-              st.freqRestore = Math.max(-dr, Math.min(dr, st.freqRestore));
-              // Balancing mode: no baseline contract — pure regulation (FCR + freqRestore + AGC)
-              let target = govMod + st.freqRestore + (st.agcOffset || 0);
+              // Balancing mode: no baseline contract — pure regulation (FCR + AGC)
+              let target = govMod + (st.agcOffset || 0);
               target = Math.max(-cr, Math.min(dr, target));
               target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
               const prevResp = st.mwResponse || 0;
@@ -916,7 +913,7 @@ export class SimulationEngine {
         if (stOutput) stOutput.textContent = Math.round(st.mwResponse || 0) + " MW";
         if (stBaseEl) stBaseEl.textContent = (stBc >= 0 ? '+' : '') + Math.round(stBc);
         if (stFcrEl) stFcrEl.textContent = '+' + Math.round(stGovMod);
-        if (stRrEl) stRrEl.textContent = ((st.freqRestore || 0) >= 0 ? '+' : '') + Math.round(st.freqRestore || 0);
+        // RR removed from balancing storage — kept only on grid-forming
         if (stAgcEl) stAgcEl.textContent = ((st.agcOffset || 0) >= 0 ? '+' : '') + Math.round(st.agcOffset || 0);
         if (entry.shutdownBtn) {
           entry.shutdownBtn.textContent = st.tripped
