@@ -341,6 +341,9 @@ html, body {
   margin-top: 4px;
 }
 
+/* ─── Tooltip ───────────────────────────────────────────────────── */
+/* Tooltips use native `title` attribute on the ⓘ span — no CSS needed. */
+
 .gen-mode-select {
   background: #f5f3ee;
   border: 1px solid #d6d2c8;

@@ -50,9 +50,9 @@ export class SimulationEngine {
     const allGens = state.nodes.filter(
       (n) => n.type === "generator" && !n.tripped && inNet(n),
     );
-    // Reset baselines for merchant + balancing gens (fixed keeps user-set baseline, load-follow gets set by dispatch)
+    // Reset baselines for market gens only (fixed/load-follow keep their allocated baseline)
     for (const gen of allGens) {
-      if (gen.mode !== "fixed") gen.baselineContract = 0;
+      if (gen.mode === "merchant" || gen.mode === "balancing") gen.baselineContract = 0;
     }
     // Reset merchant storage baselines too
     const allStorages = state.nodes.filter(
@@ -99,14 +99,14 @@ export class SimulationEngine {
       }
     }
 
-    // --- Step 2: Load-follow gens (proportional by rating) ---
+    // --- Step 2: Load-follow gens (proportional by rating, capped by committedMW) ---
     const lfGens = allGens.filter(g => g.mode === "load-follow");
     if (lfGens.length > 0 && remaining > 0) {
       const totalLfRating = lfGens.reduce((s, g) => s + (g.rating || 100), 0);
       for (const gen of lfGens) {
         const share = (gen.rating || 100) / totalLfRating;
         const alloc = Math.round(remaining * share * 10) / 10;
-        gen.baselineContract = Math.min(alloc, gen.rating || Infinity);
+        gen.baselineContract = Math.min(alloc, gen.committedMW !== undefined ? gen.committedMW : gen.rating || Infinity, gen.rating || Infinity);
         if (writeMw) gen.mw = gen.baselineContract;
       }
       // Recompute remaining from actual allocations
@@ -122,7 +122,7 @@ export class SimulationEngine {
       bids.push({
         node: gen,
         price: gen.bidPrice || 50,
-        qty: gen.bidQty || gen.rating || 100,
+        qty: gen.committedMW || gen.rating || 100,
       });
     }
     // Storage sell bids (merchant mode)
@@ -448,23 +448,15 @@ export class SimulationEngine {
               continue;
             }
             let totalTarget;
-            if (gen.mode === "merchant") {
-              totalTarget = (gen.baselineContract || 0);
-            } else if (gen.mode === "fixed") {
-              totalTarget = (gen.baselineContract || 0);
-            } else if (gen.mode === "fcr-only") {
-              const droop = gen.droop || 0.04;
-              const rating = gen.rating || 100;
-              const dev = (subFreq - f0) / f0;
-              const govMod = -(1 / droop) * dev * rating;
-              totalTarget = (gen.baselineContract || 0) + govMod;
+            const droop = gen.droop || 0.04;
+            const rating = gen.rating || 100;
+            const dev = (subFreq - f0) / f0;
+            const govMod = -(1 / droop) * dev * rating;
+            if (gen.mode === "merchant" || gen.mode === "fixed") {
+              totalTarget = (gen.baselineContract || 0) + (gen.fcrEnabled !== false ? govMod : 0);
             } else {
-              const droop = gen.droop || 0.04;
-              const rating = gen.rating || 100;
-              const dev = (subFreq - f0) / f0;
-              const govMod = -(1 / droop) * dev * rating;
               totalTarget =
-                (gen.baselineContract || 0) + govMod + (gen.agcOffset || 0);
+                (gen.baselineContract || 0) + govMod + (gen.agcEnabled !== false ? (gen.agcOffset || 0) : 0);
             }
             const genRating = gen.rating || Infinity;
             totalTarget = Math.max(0, Math.min(genRating, totalTarget));
@@ -495,7 +487,10 @@ const rampUpTC = st.rampUpTC || 0.1;
               const dev = (subFreq - f0) / f0;
               const effectiveRating = dr;
               const govMod = -(1 / droop) * dev * effectiveRating;
-              let target = bc + govMod + (st.agcOffset || 0);
+              st.freqRestore =
+                (st.freqRestore || 0) + 20 * (f0 - subFreq) * physicsDt;
+              st.freqRestore = Math.max(-dr, Math.min(dr, st.freqRestore));
+              let target = bc + govMod + st.freqRestore + (st.agcOffset || 0);
               target = Math.max(-cr, Math.min(dr, target));
               target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
               const prevResp = st.mwResponse || 0;
@@ -771,8 +766,9 @@ const rampUpTC = st.rampUpTC || 0.1;
 
           // --- Step 8: AGC (gens) ---
           const balancingGens = gens.filter((g) =>
-            (g.mode === "balancing" && (state.marginalGenIds.size === 0 || state.marginalGenIds.has(g.id))) ||
-            g.mode === "load-follow"
+            g.agcEnabled !== false &&
+            ((g.mode === "balancing" && (state.marginalGenIds.size === 0 || state.marginalGenIds.has(g.id))) ||
+             g.mode === "load-follow")
           );
           const freqErr = f0 - subFreqRef.value;
           if (balancingGens.length > 0) {
@@ -836,7 +832,7 @@ const rampUpTC = st.rampUpTC || 0.1;
               return s + Math.max(0, dr - bc) + Math.max(0, bc + cr);
             }, 0);
             if (totalStorHeadroom > 0) {
-              const totalAgc = 100 * freqErr * physicsDt;
+              const totalAgc = 400 * freqErr * physicsDt;
               for (const st of balancingStorages) {
                 const bc = st.baselineContract || 0;
                 const dr = st.dischargeRate || 500;
@@ -925,8 +921,18 @@ const rampUpTC = st.rampUpTC || 0.1;
         const entry = openPanels[nodeId];
         if (entry.outputEl)
           entry.outputEl.textContent = Math.round(gen.mw || 0) + " MW";
+        if (entry.outputBase || entry.outputFcr || entry.outputAgc) {
+          const genNet = state.networks.find(n => n.nodeIds.has(gen.id));
+          const genFreq = genNet ? genNet.freq : state.frequency;
+          const dev = (genFreq - f0) / f0;
+          const govMod = -(1 / (gen.droop || 0.04)) * dev * (gen.rating || 100);
+          const agcComp = gen.agcOffset || 0;
+          if (entry.outputBase) entry.outputBase.textContent = Math.round(gen.baselineContract || 0);
+          if (entry.outputFcr) entry.outputFcr.textContent = (govMod >= 0 ? '+' : '') + Math.round(govMod);
+          if (entry.outputAgc) entry.outputAgc.textContent = (agcComp >= 0 ? '+' : '') + Math.round(agcComp);
+        }
         if (entry.baselineSlider && entry.baselineVal) {
-          const d = gen.baselineContract || 0;
+          const d = gen.committedMW || 0;
           if (d > parseInt(entry.baselineSlider.max))
             entry.baselineSlider.max = d;
           entry.baselineSlider.value = d;
@@ -1049,7 +1055,7 @@ const rampUpTC = st.rampUpTC || 0.1;
           entry.nodes[node.id].droop = node.droop || 0.04;
           entry.nodes[node.id].fcrHeadroom = node.fcrHeadroom || 10;
           entry.nodes[node.id].bidPrice = node.bidPrice || 50;
-          entry.nodes[node.id].bidQty = node.bidQty || node.rating || 100;
+          entry.nodes[node.id].committedMW = node.committedMW || node.rating || 100;
           entry.nodes[node.id].turbineTimeConstant =
             node.turbineTimeConstant || 1;
         }

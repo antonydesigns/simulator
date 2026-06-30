@@ -279,6 +279,22 @@ export class StatsPanel {
         this.drawFreqChart();
       });
     }
+
+    // Hover crosshair
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      if (mx >= 35 && mx <= canvas.width - 8) {
+        canvas.dataset._freqHoverX = mx;
+      } else {
+        delete canvas.dataset._freqHoverX;
+      }
+      this.drawFreqChart();
+    });
+    canvas.addEventListener('mouseleave', () => {
+      delete canvas.dataset._freqHoverX;
+      this.drawFreqChart();
+    });
   }
 
   drawFreqChart() {
@@ -421,7 +437,48 @@ export class StatsPanel {
     ctx.textBaseline = 'top';
     ctx.fillText('± ' + viewLeft + ' .. ' + viewEnd + ' / ' + total, padL + 4, padT + ph + 4);
 
+    // Hover crosshair + tooltip
+    const hoverX = canvas.dataset._freqHoverX;
+    if (hoverX !== undefined) {
+      const hx = parseFloat(hoverX);
+      const i = Math.round((hx - padL) / xScale);
+      if (i >= 0 && i < visibleData.length) {
+        const dp = visibleData[i];
+        const freqVal = dp.frequency;
+        const chartY = padT + (yMax - freqVal) * yScale;
+        const simTime = viewLeft + i;
+        const seconds = (simTime * 0.25).toFixed(1);
 
+        // Vertical line
+        ctx.strokeStyle = '#e74c3c';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(hx, padT);
+        ctx.lineTo(hx, padT + ph);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Tooltip box
+        const tooltipW = 130, tooltipH = 42;
+        let tooltipX = hx + 8;
+        if (tooltipX + tooltipW > padL + pw) tooltipX = hx - tooltipW - 8;
+        const tooltipY = padT + 4;
+        ctx.fillStyle = 'rgba(40,40,40,0.9)';
+        ctx.beginPath();
+        ctx.roundRect(tooltipX, tooltipY, tooltipW, tooltipH, 4);
+        ctx.fill();
+
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText(freqVal.toFixed(3) + ' Hz', tooltipX + 6, tooltipY + 4);
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = '#bbb';
+        ctx.fillText('t = ' + seconds + 's', tooltipX + 6, tooltipY + 21);
+      }
+    }
 
     ctx.restore();
   }
@@ -453,7 +510,7 @@ export class StatsPanel {
         price: (g.mode === 'fixed' || g.mode === 'load-follow') ? -10 : (g.bidPrice || 50),
         qty: (g.mode === 'fixed' || g.mode === 'load-follow')
           ? (g.rating || 100)
-          : (g.bidQty || g.rating || 100),
+          : (g.committedMW || g.rating || 100),
         label: g.shortId || g.id.slice(-5),
       }));
     const stors = state.nodes.filter(n => n.type === 'storage' && !n.tripped && n.mode === 'merchant' && n.sellTrigger !== 'off');

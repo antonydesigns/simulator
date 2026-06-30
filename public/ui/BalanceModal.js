@@ -227,11 +227,11 @@ export class BalanceModal {
       for (const gen of meritGens) {
         const dispatched = gen.baselineContract || 0;
         const bidPrice = gen.bidPrice != null ? '$' + gen.bidPrice.toFixed(1) + '/MWh' : '—';
-        const bidQty = gen.bidQty != null ? gen.bidQty + ' MW' : '—';
+        const commQty = gen.committedMW != null ? gen.committedMW + ' MW' : '—';
         const row = document.createElement('div');
         row.className = 'balance-node-row balance-merit-row';
         row.innerHTML = '<span class="balance-node-label">⚡ ' + (gen.shortId || gen.id.slice(-5)) + ' <span class="balance-rating">(' + (gen.rating || 100) + ' MVA)</span></span>' +
-          '<div class="balance-node-controls" style="gap:6px"><span style="color:#666;font-size:12px">Bid ' + bidPrice + ' x ' + bidQty + '</span><span style="color:#4a6a8a;font-size:12px;font-weight:500">dispatched ' + Math.round(dispatched) + ' MW</span></div>';
+          '<div class="balance-node-controls" style="gap:6px"><span style="color:#666;font-size:12px">Offer ' + bidPrice + ' x ' + commQty + '</span><span style="color:#4a6a8a;font-size:12px;font-weight:500">dispatched ' + Math.round(dispatched) + ' MW</span></div>';
         section.appendChild(row);
         islandState.fixedEntries.push({ node: gen, value: dispatched });
       }

@@ -1,5 +1,77 @@
 // ─── SettingsPanel ─────────────────────────────────────────────────
 
+const $tip = (text) => `<span title="${text}" style="cursor:help;margin-left:4px;font-size:12px;color:#999">ⓘ</span>`;
+
+function genModeFieldsHTML(node, mode) {
+  const rating = node.rating || 100;
+  const commMW = node.committedMW || 0;
+  const fcrH = node.fcrHeadroom || 10;
+  const bidPrice = node.bidPrice || 50;
+  const isMarket = mode === 'merchant' || mode === 'balancing';
+  const fcrLocked = mode === 'load-follow' || mode === 'balancing';
+  const fcrEnabled = node.fcrEnabled !== undefined ? node.fcrEnabled : true;
+  const agcEnabled = node.agcEnabled !== undefined ? node.agcEnabled : true;
+  const commMin = mode === 'load-follow' ? 0 : 1;
+  const commLabel = isMarket ? 'Committed MW' : 'Committed MW';
+  // Only include bid price-related fields for market modes
+  let priceHTML = '';
+  if (isMarket) {
+    priceHTML = `
+      <div class="settings-row">
+        <label class="settings-label">
+          Offer price ($/MW) ${$tip('Price bid into merit order. Lower-priced units dispatched first. Negative prices allowed.')}
+        </label>
+        <div class="settings-slider-group">
+          <input type="number" class="offer-price-input" step="0.1" value="${bidPrice}" style="width:80px;padding:2px 6px;background:#f5f3ee;border:1px solid #d6d2c8;border-radius:4px;text-align:right;">
+          <span style="font-size:12px;color:#888">$/MWh</span>
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="settings-row">
+      <label class="settings-label">
+        ${commLabel} ${$tip('Your commitment into the market or schedule. Dispatched MW (base) in the output breakdown may differ.')}
+      </label>
+      <div class="settings-slider-group">
+        <input type="range" class="baseline-slider" min="${commMin}" max="${rating}" value="${commMW}">
+        <span class="baseline-value">${Math.round(commMW)} MW</span>
+      </div>
+    </div>
+    ${priceHTML}
+    <div class="settings-row fcr-row">
+      <label class="settings-label">
+        Frequency Containment Reserve ${$tip(fcrLocked ? 'Governor droop responds instantly to frequency deviations. Always active for this mode.' : 'Governor droop responds instantly to frequency deviations. Enable for primary frequency response.')}
+      </label>
+      <div class="settings-slider-group">
+        ${fcrLocked
+          ? `<span style="font-size:12px;color:#999">enabled</span>`
+          : `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font-size:12px;color:#aaa">
+              <input type="checkbox" class="fcr-toggle" ${fcrEnabled ? 'checked' : ''}>
+              <span>enabled</span>
+            </label>`}
+      </div>
+    </div>
+    <div class="settings-row fcr-headroom-row" style="display:${fcrEnabled || fcrLocked ? '' : 'none'}">
+      <label class="settings-label">FCR Headroom</label>
+      <div class="settings-slider-group">
+        <input type="range" class="fcr-headroom-slider" min="0" max="${rating}" value="${fcrH}">
+        <span class="fcr-headroom-value">${Math.round(fcrH)} MW</span>
+      </div>
+    </div>
+    ${(mode === 'load-follow' || mode === 'balancing') ? `
+    <div class="settings-row agc-row">
+      <label class="settings-label">
+        Automatic Frequency Restoration Reserve ${$tip('Secondary control that restores frequency to 50 Hz over time.')}
+      </label>
+      <div class="settings-slider-group">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font-size:12px;color:#aaa">
+          <input type="checkbox" class="agc-toggle" ${agcEnabled ? 'checked' : ''}>
+          <span>enabled</span>
+        </label>
+      </div>
+    </div>` : ''}`;
+}
+
 export class SettingsPanel {
   constructor(store, engine, renderer, persister, statsPanel) {
     this.store = store;
@@ -11,7 +83,7 @@ export class SettingsPanel {
 
   openSettings(nodeId) {
     const { state, sim, openPanels, ISLAND_COLORS } = this.store;
-  
+
   const node = state.nodes.find(n => n.id === nodeId);
   if (!node || node.type === 'junction') return;
   if (openPanels[nodeId]) { openPanels[nodeId].panel.style.zIndex = Date.now(); return; }
@@ -22,83 +94,97 @@ export class SettingsPanel {
   const entry = { panel };
 
   if (node.type === 'generator') {
+    const mode = node.mode || 'balancing';
+    const rating = node.rating || 100;
+    const bc = node.baselineContract || 0;
+    const isMarket = mode === 'merchant' || mode === 'balancing';
+    const fcrLocked = mode === 'load-follow' || mode === 'balancing';
+    const fcrEnabled = node.fcrEnabled !== undefined ? node.fcrEnabled : true;
+    const agcEnabled = node.agcEnabled !== undefined ? node.agcEnabled : true;
+
+    // Compute initial output breakdown
+    const dev = (state.frequency - 50) / 50;
+    const govMod = -(1 / (node.droop || 0.04)) * dev * rating;
+
     panel.innerHTML = `
       <div class="settings-header"><span class="settings-title">Generator ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
-        <div class="settings-row"><label class="settings-label">Dispatched MW</label>
-          <div class="settings-slider-group">
-            <input type="range" class="baseline-slider" min="0" max="${node.rating || 100}" value="${node.baselineContract || 0}">
-            <span class="baseline-value">${Math.round(node.baselineContract || 0)} MW</span>
+        <div class="settings-row">
+          <label class="settings-label">
+            Output ${$tip('Real-time electrical output: base + FCR + AGC contributions.')}
+          </label>
+          <div class="settings-slider-group" style="justify-content:flex-end;">
+            <span class="gen-output" style="font-size:14px;font-weight:600;">${Math.round(node.mw || 0)} MW</span>
           </div>
         </div>
-        <div class="settings-row"><label class="settings-label">Output</label>
-          <div class="settings-slider-group" style="justify-content:flex-end;"><span class="gen-output" style="font-size:14px;font-weight:600;">${Math.round(node.mw || 0)} MW</span></div>
-        </div>
-        <div class="settings-row market-row" style="${node.mode === 'fixed' ? 'display:none;' : ''}"><label class="settings-label">Bid Price</label>
-          <div class="settings-slider-group">
-            <input type="range" class="bid-price-slider" min="0" max="500" step="0.5" value="${node.bidPrice || 50}">
-            <span class="bid-price-value">$${(node.bidPrice || 50).toFixed(1)}/MWh</span>
+        <div class="settings-row" style="margin-top:-4px">
+          <div style="display:flex;gap:10px;font-size:11px;color:#999;padding-left:2px">
+            <span>Base <span class="output-base">${Math.round(bc)}</span></span>
+            <span>FCR <span class="output-fcr">${govMod >= 0 ? '+' : ''}${Math.round(govMod)}</span></span>
+            <span>AGC <span class="output-agc">${(node.agcOffset || 0) >= 0 ? '+' : ''}${Math.round(node.agcOffset || 0)}</span></span>
           </div>
         </div>
-        <div class="settings-row market-row" style="${node.mode === 'fixed' ? 'display:none;' : ''}"><label class="settings-label">Bid Qty</label>
+        <!-- Mode dropdown (at top) -->
+        <div class="settings-row">
+          <label class="settings-label">Mode</label>
           <div class="settings-slider-group">
-            <input type="range" class="bid-qty-slider" min="0" max="${node.rating || 100}" value="${node.bidQty || node.rating || 100}">
-            <span class="bid-qty-value">${Math.round(node.bidQty || node.rating || 100)} MWh</span>
+            <select class="gen-mode-select">
+              <option value="fixed" ${mode === 'fixed' ? 'selected' : ''}>Fixed</option>
+              <option value="load-follow" ${mode === 'load-follow' ? 'selected' : ''}>Load-Follow</option>
+              <option value="merchant" ${mode === 'merchant' ? 'selected' : ''}>Merchant</option>
+              <option value="balancing" ${mode === 'balancing' ? 'selected' : ''}>Balancing</option>
+            </select>
           </div>
         </div>
-        <div class="settings-row"><label class="settings-label">FCR Headroom</label>
+        <!-- mode-specific fields -->
+        <div class="mode-fields">${genModeFieldsHTML(node, mode)}</div>
+        <!-- common technical settings -->
+        <div class="settings-row sep-top">
+          <label class="settings-label">Rating ${$tip('Maximum apparent power rating of the generator.')}</label>
           <div class="settings-slider-group">
-            <input type="range" class="fcr-headroom-slider" min="0" max="${node.rating || 100}" value="${node.fcrHeadroom || 10}">
-            <span class="fcr-headroom-value">${Math.round(node.fcrHeadroom || 10)} MW</span>
+            <input type="range" class="rating-slider" min="1" max="500" value="${rating}">
+            <span class="rating-value">${rating} MVA</span>
           </div>
         </div>
-        <div class="settings-row"><label class="settings-label">Rating</label>
-          <div class="settings-slider-group">
-            <input type="range" class="rating-slider" min="1" max="500" value="${node.rating || 100}">
-            <span class="rating-value">${node.rating || 100} MVA</span>
-          </div>
-        </div>
-        <div class="settings-row"><label class="settings-label">Inertia H</label>
+        <div class="settings-row">
+          <label class="settings-label">Inertia H ${$tip('Generator inertia constant (seconds). Higher = slower frequency change rate.')}</label>
           <div class="settings-slider-group">
             <input type="range" class="inertia-slider" min="0" max="20" step="0.5" value="${node.inertia || 5}">
             <span class="inertia-value">${(node.inertia || 5).toFixed(1)}s</span>
           </div>
         </div>
-        <div class="settings-row"><label class="settings-label">Droop</label>
+        <div class="settings-row">
+          <label class="settings-label">Droop ${$tip('Governor droop percentage. Lower = stronger FCR response per Hz deviation.')}</label>
           <div class="settings-slider-group">
             <input type="range" class="droop-slider" min="0.5" max="20" step="0.5" value="${(node.droop || 0.04) * 100}">
             <span class="droop-value">${(node.droop || 0.04) * 100}%</span>
           </div>
         </div>
-        <div class="settings-row"><label class="settings-label">Turbine TC</label>
+        <div class="settings-row">
+          <label class="settings-label">Ramp Up TC ${$tip('Time constant for increasing output. Lower = faster ramp-up.')}</label>
           <div class="settings-slider-group">
             <input type="range" class="tc-slider" min="0.2" max="5" step="0.1" value="${node.turbineTimeConstant || 1}">
             <span class="tc-value">${(node.turbineTimeConstant || 1).toFixed(1)}s</span>
           </div>
         </div>
-        <div class="settings-row"><label class="settings-label">Ramp-Down TC</label>
+        <div class="settings-row">
+          <label class="settings-label">Ramp Down TC ${$tip('Time constant for decreasing output. Lower = faster ramp-down.')}</label>
           <div class="settings-slider-group">
             <input type="range" class="rd-slider" min="0.05" max="2" step="0.05" value="${node.rampDownTC || 0.3}">
             <span class="rd-value">${(node.rampDownTC || 0.3).toFixed(2)}s</span>
           </div>
         </div>
-        <div class="settings-row sep-top"><label class="settings-label">Mode</label>
-          <div class="settings-slider-group">
-            <select class="gen-mode-select">
-              <option value="balancing" ${node.mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option>
-              <option value="load-follow" ${node.mode === 'load-follow' ? 'selected' : ''}>Load-Follow (FCR + AGC)</option>
-              <option value="fcr-only" ${node.mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option>
-              <option value="merchant" ${node.mode === 'merchant' ? 'selected' : ''}>Merchant (Price Only)</option>
-              <option value="fixed" ${node.mode === 'fixed' ? 'selected' : ''}>Fixed</option>
-            </select>
-          </div>
+        <div class="settings-row sep-top">
+          <button class="gen-shutdown-btn" style="width:100%;padding:6px 0;border:1px solid #c0392b;border-radius:4px;cursor:pointer;font-size:13px;background:${node.tripped ? '#27ae60' : 'transparent'};color:${node.tripped ? '#fff' : '#c0392b'}">${node.tripped ? '🔄 Restart' : '🛑 Shut Down'}</button>
         </div>
-        <div class="settings-row sep-top"><button class="gen-shutdown-btn" style="width:100%;padding:6px 0;border:1px solid #c0392b;border-radius:4px;cursor:pointer;font-size:13px;background:${node.tripped ? '#27ae60' : 'transparent'};color:${node.tripped ? '#fff' : '#c0392b'}">${node.tripped ? '🔄 Restart' : '🛑 Shut Down'}</button></div>
       </div>`;
 
     entry.outputEl = panel.querySelector('.gen-output');
+    entry.outputBase = panel.querySelector('.output-base');
+    entry.outputFcr = panel.querySelector('.output-fcr');
+    entry.outputAgc = panel.querySelector('.output-agc');
 
-    // Baseline Contract slider (updated by market, but user can tweak)
+    // --- Committed MW slider ---
     const baselineSlider = panel.querySelector('.baseline-slider');
     const baselineVal = panel.querySelector('.baseline-value');
     entry.baselineSlider = baselineSlider;
@@ -106,58 +192,74 @@ export class SettingsPanel {
     baselineSlider.addEventListener('input', () => {
       const v = parseFloat(baselineSlider.value);
       baselineVal.textContent = Math.round(v) + ' MW';
-      node.baselineContract = v;
+      node.committedMW = v;
     });
     baselineSlider.addEventListener('change', () => this.persister.persist());
 
-    // Rating slider
+    // --- Offer price input (merchant/balancing only) ---
+    const offerInput = panel.querySelector('.offer-price-input');
+    if (offerInput) {
+      // Prevent scroll wheel from changing value
+      offerInput.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        e.target.blur();
+      });
+      offerInput.addEventListener('input', () => {
+        const v = parseFloat(offerInput.value);
+        if (!isNaN(v)) node.bidPrice = v;
+      });
+      offerInput.addEventListener('change', () => this.persister.persist());
+    }
+
+    // --- FCR toggle ---
+    const fcrToggle = panel.querySelector('.fcr-toggle');
+    const fcrHeadroomRow = panel.querySelector('.fcr-headroom-row');
+    if (fcrToggle) {
+      // If mode is load-follow or balancing, fcr-only row will not have a toggle
+      // (fcrLocked = true, so it's a text "enabled" instead)
+      fcrToggle.addEventListener('change', () => {
+        node.fcrEnabled = fcrToggle.checked;
+        if (fcrHeadroomRow) {
+          fcrHeadroomRow.style.display = node.fcrEnabled ? '' : 'none';
+        }
+        this.persister.persist();
+      });
+    }
+
+    // --- FCR Headroom slider ---
+    const fcrSlider = panel.querySelector('.fcr-headroom-slider');
+    const fcrVal = panel.querySelector('.fcr-headroom-value');
+    if (fcrSlider) {
+      fcrSlider.addEventListener('input', () => {
+        const v = parseFloat(fcrSlider.value);
+        fcrVal.textContent = Math.round(v) + ' MW';
+        node.fcrHeadroom = v;
+      });
+      fcrSlider.addEventListener('change', () => this.persister.persist());
+    }
+
+    // --- AGC toggle (load-follow / balancing only) ---
+    const agcToggle = panel.querySelector('.agc-toggle');
+    if (agcToggle) {
+      agcToggle.addEventListener('change', () => {
+        node.agcEnabled = agcToggle.checked;
+        this.persister.persist();
+      });
+    }
+
+    // --- Rating slider ---
     const ratingSlider = panel.querySelector('.rating-slider');
     const ratingVal = panel.querySelector('.rating-value');
     ratingSlider.addEventListener('input', () => {
       const v = parseFloat(ratingSlider.value);
       ratingVal.textContent = v + ' MVA';
       node.rating = v;
-      if (fcrSlider) fcrSlider.max = v;
-      if (bidQtySlider) bidQtySlider.max = v;
       if (baselineSlider) baselineSlider.max = v;
+      if (fcrSlider) fcrSlider.max = v;
     });
     ratingSlider.addEventListener('change', () => this.persister.persist());
 
-    // Bid Price slider
-    const bidPriceSlider = panel.querySelector('.bid-price-slider');
-    const bidPriceVal = panel.querySelector('.bid-price-value');
-    if (bidPriceSlider) {
-      bidPriceSlider.addEventListener('input', () => {
-        const v = parseFloat(bidPriceSlider.value);
-        bidPriceVal.textContent = '$' + v.toFixed(1) + '/MWh';
-        node.bidPrice = v;
-      });
-      bidPriceSlider.addEventListener('change', () => this.persister.persist());
-    }
-
-    // Bid Qty slider
-    const bidQtySlider = panel.querySelector('.bid-qty-slider');
-    const bidQtyVal = panel.querySelector('.bid-qty-value');
-    if (bidQtySlider) {
-      bidQtySlider.addEventListener('input', () => {
-        const v = parseFloat(bidQtySlider.value);
-        bidQtyVal.textContent = Math.round(v) + ' MWh';
-        node.bidQty = v;
-      });
-      bidQtySlider.addEventListener('change', () => this.persister.persist());
-    }
-
-    // FCR Headroom slider
-    const fcrSlider = panel.querySelector('.fcr-headroom-slider');
-    const fcrVal = panel.querySelector('.fcr-headroom-value');
-    fcrSlider.addEventListener('input', () => {
-      const v = parseFloat(fcrSlider.value);
-      fcrVal.textContent = Math.round(v) + ' MW';
-      node.fcrHeadroom = v;
-    });
-    fcrSlider.addEventListener('change', () => this.persister.persist());
-
-    // Inertia slider
+    // --- Inertia slider ---
     const inertiaSlider = panel.querySelector('.inertia-slider');
     const inertiaVal = panel.querySelector('.inertia-value');
     inertiaSlider.addEventListener('input', () => {
@@ -167,7 +269,7 @@ export class SettingsPanel {
     });
     inertiaSlider.addEventListener('change', () => this.persister.persist());
 
-    // Droop slider
+    // --- Droop slider ---
     const droopSlider = panel.querySelector('.droop-slider');
     const droopVal = panel.querySelector('.droop-value');
     droopSlider.addEventListener('input', () => {
@@ -177,19 +279,7 @@ export class SettingsPanel {
     });
     droopSlider.addEventListener('change', () => this.persister.persist());
 
-    // Ramp TC sliders
-    const rampUpSlider = panel.querySelector('.ramp-up-slider'), rampUpVal = panel.querySelector('.ramp-up-value');
-    const rampDownSlider = panel.querySelector('.ramp-down-slider'), rampDownVal = panel.querySelector('.ramp-down-value');
-    if (rampUpSlider) {
-      rampUpSlider.addEventListener('input', () => { const v = parseFloat(rampUpSlider.value); rampUpVal.textContent = v.toFixed(2) + 's'; node.rampUpTC = v; });
-      rampUpSlider.addEventListener('change', () => this.persister.persist());
-    }
-    if (rampDownSlider) {
-      rampDownSlider.addEventListener('input', () => { const v = parseFloat(rampDownSlider.value); rampDownVal.textContent = v.toFixed(2) + 's'; node.rampDownTC = v; });
-      rampDownSlider.addEventListener('change', () => this.persister.persist());
-    }
-
-    // Turbine TC slider
+    // --- Turbine TC (Ramp Up) slider ---
     const tcSlider = panel.querySelector('.tc-slider');
     const tcVal = panel.querySelector('.tc-value');
     tcSlider.addEventListener('input', () => {
@@ -199,7 +289,7 @@ export class SettingsPanel {
     });
     tcSlider.addEventListener('change', () => this.persister.persist());
 
-    // Ramp-Down TC slider
+    // --- Ramp Down TC slider ---
     const rdSlider = panel.querySelector('.rd-slider');
     const rdVal = panel.querySelector('.rd-value');
     rdSlider.addEventListener('input', () => {
@@ -209,21 +299,26 @@ export class SettingsPanel {
     });
     rdSlider.addEventListener('change', () => this.persister.persist());
 
-    // Mode select
+    // --- Mode select ---
     const modeSelect = panel.querySelector('.gen-mode-select');
     if (modeSelect) {
       modeSelect.addEventListener('change', () => {
+        const oldMode = node.mode;
         node.mode = modeSelect.value;
-        // Toggle market rows visibility (hidden for fixed mode)
-        const marketRows = panel.querySelectorAll('.market-row');
-        for (const row of marketRows) {
-          row.style.display = (modeSelect.value === 'fixed' || modeSelect.value === 'load-follow') ? 'none' : '';
+        // Re-render mode-specific fields
+        const modeFieldsContainer = panel.querySelector('.mode-fields');
+        if (modeFieldsContainer) {
+          modeFieldsContainer.innerHTML = genModeFieldsHTML(node, node.mode);
+          // Re-bind listeners for new mode-specific widgets
+          this._bindGenModeWidgets(panel, node, entry);
+          // Reset output breakdown for new mode
+          this._updateGenOutputBreakdown(panel, node, state);
         }
         this.persister.persist();
       });
     }
 
-    // Gen shutdown button
+    // --- Shutdown button ---
     const genShutdownBtn = panel.querySelector('.gen-shutdown-btn');
     if (genShutdownBtn) {
       genShutdownBtn.addEventListener('click', () => {
@@ -621,6 +716,89 @@ export class SettingsPanel {
   openPanels[nodeId] = entry;
 }
 
+  /** Re-bind event listeners for mode-specific widgets after a mode change re-render. */
+  _bindGenModeWidgets(panel, node, entry) {
+    // Committed MW slider
+    const baselineSlider = panel.querySelector('.baseline-slider');
+    const baselineVal = panel.querySelector('.baseline-value');
+    if (baselineSlider) {
+      entry.baselineSlider = baselineSlider;
+      entry.baselineVal = baselineVal;
+      baselineSlider.addEventListener('input', () => {
+        const v = parseFloat(baselineSlider.value);
+        baselineVal.textContent = Math.round(v) + ' MW';
+        node.committedMW = v;
+      });
+      baselineSlider.addEventListener('change', () => this.persister.persist());
+    }
+
+    // Offer price input
+    const offerInput = panel.querySelector('.offer-price-input');
+    if (offerInput) {
+      offerInput.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        e.target.blur();
+      });
+      offerInput.addEventListener('input', () => {
+        const v = parseFloat(offerInput.value);
+        if (!isNaN(v)) node.bidPrice = v;
+      });
+      offerInput.addEventListener('change', () => this.persister.persist());
+    }
+
+    // FCR toggle
+    const fcrToggle = panel.querySelector('.fcr-toggle');
+    const fcrHeadroomRow = panel.querySelector('.fcr-headroom-row');
+    if (fcrToggle) {
+      fcrToggle.addEventListener('change', () => {
+        node.fcrEnabled = fcrToggle.checked;
+        if (fcrHeadroomRow) {
+          fcrHeadroomRow.style.display = node.fcrEnabled ? '' : 'none';
+        }
+        this.persister.persist();
+      });
+    }
+
+    // FCR Headroom slider
+    const fcrSlider = panel.querySelector('.fcr-headroom-slider');
+    const fcrVal = panel.querySelector('.fcr-headroom-value');
+    if (fcrSlider) {
+      fcrSlider.addEventListener('input', () => {
+        const v = parseFloat(fcrSlider.value);
+        fcrVal.textContent = Math.round(v) + ' MW';
+        node.fcrHeadroom = v;
+      });
+      fcrSlider.addEventListener('change', () => this.persister.persist());
+    }
+
+    // AGC toggle
+    const agcToggle = panel.querySelector('.agc-toggle');
+    if (agcToggle) {
+      agcToggle.addEventListener('change', () => {
+        node.agcEnabled = agcToggle.checked;
+        this.persister.persist();
+      });
+    }
+  }
+
+  /** Update the output breakdown (Base / FCR / AGC). */
+  _updateGenOutputBreakdown(panel, node, state) {
+    const baseEl = panel.querySelector('.output-base');
+    const fcrEl = panel.querySelector('.output-fcr');
+    const agcEl = panel.querySelector('.output-agc');
+    if (!baseEl) return;
+    // Try to use the gen's own network frequency
+    const genNet = state.networks.find(n => n.nodeIds.has(node.id));
+    const genFreq = genNet ? genNet.freq : state.frequency;
+    const dev = (genFreq - 50) / 50;
+    const govMod = -(1 / (node.droop || 0.04)) * dev * (node.rating || 100);
+    const bc = node.baselineContract || 0;
+    baseEl.textContent = Math.round(bc);
+    fcrEl.textContent = (govMod >= 0 ? '+' : '') + Math.round(govMod);
+    const agcOffset = node.agcOffset || 0;
+    agcEl.textContent = (agcOffset >= 0 ? '+' : '') + Math.round(agcOffset);
+  }
+
   refreshNodePanels() {
     const { openPanels } = this.store;
     for (const [nodeId, entry] of Object.entries(openPanels)) {
@@ -635,7 +813,7 @@ export class SettingsPanel {
 
   openLineSettings(connId) {
     const { state, sim, openPanels, ISLAND_COLORS } = this.store;
-  
+
   const conn = state.connections.find(c => c.id === connId);
   if (!conn) return;
   // Close existing line settings

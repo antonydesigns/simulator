@@ -43,7 +43,7 @@ export class Persister {
           if (n.baselineContract === undefined) n.baselineContract = 0;
           if (n.fcrHeadroom === undefined) n.fcrHeadroom = 10;
           if (n.bidPrice === undefined) n.bidPrice = 50;
-          if (n.bidQty === undefined) n.bidQty = n.rating || 100;
+          if (n.committedMW === undefined) n.committedMW = n.bidQty || n.rating || 100;
           if (n.agcOffset === undefined) n.agcOffset = 0;
           if (n.rating === undefined) n.rating = 100;
           if (n.inertia === undefined) n.inertia = 5;
