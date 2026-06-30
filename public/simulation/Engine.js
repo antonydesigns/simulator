@@ -911,10 +911,12 @@ export class SimulationEngine {
         const stOutput = entry.panel?.querySelector('.stor-output');
         const stBaseEl = entry.panel?.querySelector('.stor-output-base');
         const stFcrEl = entry.panel?.querySelector('.stor-output-fcr');
+        const stRrEl = entry.panel?.querySelector('.stor-output-rr');
         const stAgcEl = entry.panel?.querySelector('.stor-output-agc');
         if (stOutput) stOutput.textContent = Math.round(st.mwResponse || 0) + " MW";
         if (stBaseEl) stBaseEl.textContent = (stBc >= 0 ? '+' : '') + Math.round(stBc);
         if (stFcrEl) stFcrEl.textContent = '+' + Math.round(stGovMod);
+        if (stRrEl) stRrEl.textContent = ((st.freqRestore || 0) >= 0 ? '+' : '') + Math.round(st.freqRestore || 0);
         if (stAgcEl) stAgcEl.textContent = ((st.agcOffset || 0) >= 0 ? '+' : '') + Math.round(st.agcOffset || 0);
         if (entry.shutdownBtn) {
           entry.shutdownBtn.textContent = st.tripped
