@@ -32,6 +32,9 @@ export class Persister {
         if (c.thermalLimit === undefined) c.thermalLimit = 100;
         if (c.tripped === undefined) c.tripped = false;
         if (c.tripTimer === undefined) c.tripTimer = 0;
+        if (c.repairing === undefined) c.repairing = false;
+        if (c.repairTimer === undefined) c.repairTimer = 0;
+        if (c.repairDuration === undefined) c.repairDuration = 15;
       }
       for (const n of state.nodes) {
         if (n.mw === undefined) n.mw = 0;

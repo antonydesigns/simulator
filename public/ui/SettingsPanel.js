@@ -695,6 +695,31 @@ export class SettingsPanel {
   panel.innerHTML = `
     <div class="settings-header"><span class="settings-title">Line ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
     <div class="settings-body">
+      <div class="settings-row" style="border-bottom:1px solid #333;padding-bottom:4px;margin-bottom:4px">
+        <label class="settings-label">Status</label>
+        <div class="settings-slider-group">
+          <span class="line-status" style="font-size:13px">${conn.tripped ? (conn.repairing ? '🔧 Repairing... ' + Math.ceil(conn.repairTimer || 0) + 's' : '⛔ Tripped') : '✅ Healthy'}</span>
+        </div>
+      </div>
+      ${conn.tripped && !conn.repairing ? `
+      <div class="settings-row">
+        <button class="line-repair-btn" style="width:100%;padding:6px 0;border:1px solid #e6b432;border-radius:4px;cursor:pointer;font-size:13px;background:transparent;color:#e6b432">🔧 Repair Line</button>
+      </div>
+      ` : ''}
+      ${conn.repairing ? `
+      <div class="settings-row">
+        <div class="settings-slider-group" style="flex-direction:column;gap:2px">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#aaa">
+            <span>🔧 Repairing...</span>
+            <span>${Math.ceil(conn.repairTimer || 0)}s</span>
+          </div>
+          <div style="height:6px;background:#333;border-radius:3px;overflow:hidden">
+            <div class="repair-progress" style="height:100%;width:${((conn.repairDuration || 15) - (conn.repairTimer || 0)) / (conn.repairDuration || 15) * 100}%;background:#e6b432;border-radius:3px;transition:width 0.5s"></div>
+          </div>
+          <div class="settings-row" style="margin-top:2px"><label class="settings-label" style="font-size:11px">Fix Duration</label><div class="settings-slider-group"><input type="range" min="5" max="60" step="1" value="${conn.repairDuration || 15}" class="repair-duration-slider"><span class="repair-duration-value" style="font-size:11px;color:#ccc">${conn.repairDuration || 15}s</span></div></div>
+        </div>
+      </div>
+      ` : ''}
       <div class="settings-row"><label class="settings-label">Reactance (p.u.)</label>
         <div class="settings-slider-group">
           <input type="range" min="0.001" max="1" step="0.001" value="${x}">
@@ -733,6 +758,34 @@ export class SettingsPanel {
     conn.thermalLimit = v;
   });
   tSlider.addEventListener('change', () => this.persister.persist());
+
+  // Repair button — start fixing a tripped line
+  const repairBtn = panel.querySelector('.line-repair-btn');
+  if (repairBtn) {
+    repairBtn.addEventListener('click', () => {
+      conn.repairing = true;
+      conn.repairTimer = conn.repairDuration || 15;
+      this.persister.persist();
+      // Close and reopen to show repair progress
+      if (openPanels['_line_' + connId]) {
+        openPanels['_line_' + connId].panel.remove();
+        delete openPanels['_line_' + connId];
+      }
+      this.openLineSettings(connId);
+    });
+  }
+
+  // Repair duration slider
+  const repDurSlider = panel.querySelector('.repair-duration-slider');
+  const repDurVal = panel.querySelector('.repair-duration-value');
+  if (repDurSlider) {
+    repDurSlider.addEventListener('input', () => {
+      const v = parseInt(repDurSlider.value, 10);
+      conn.repairDuration = v;
+      if (repDurVal) repDurVal.textContent = v + 's';
+    });
+    repDurSlider.addEventListener('change', () => this.persister.persist());
+  }
 
   // Close button
   panel.querySelector('.settings-close').addEventListener('click', () => {

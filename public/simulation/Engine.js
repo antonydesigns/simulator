@@ -177,6 +177,18 @@ export class SimulationEngine {
       c.loadingPct = undefined;
     }
 
+    // Repair timer countdown — tripped lines auto-restore when timer hits 0
+    for (const c of state.connections) {
+      if (c.repairing && c.repairTimer > 0) {
+        c.repairTimer -= dt;
+        if (c.repairTimer <= 0) {
+          c.repairTimer = 0;
+          c.repairing = false;
+          c.tripped = false;
+        }
+      }
+    }
+
     for (const net of state.networks) {
       const freq = net.freq;
       const netNodes = [...net.nodeIds]
@@ -1093,10 +1105,7 @@ export class SimulationEngine {
       st.freqRestore = 0;
       st.tripped = false;
     }
-    for (const c of state.connections) {
-      c.tripped = false;
-      c.tripTimer = 0;
-    }
+    // Line trips NOT reset here — persist until repaired via click-to-fix
     for (const load of state.nodes.filter((n) => n.type === "load")) {
       load.shedPct = 0;
       if (load.baseMw) load.mw = load.baseMw;

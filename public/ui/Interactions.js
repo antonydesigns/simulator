@@ -149,6 +149,14 @@ function showMenu(e, nodeHit, simple) {
     addMenuItem('Delete', 'delete-node');
   } else if (lineHit) {
     menu.dataset.connId = lineHit.conn.id;
+    const conn = lineHit.conn;
+    if (conn.tripped && !conn.repairing) {
+      addMenuItem('🔧 Repair line', 'repair-line');
+    } else if (conn.repairing) {
+      addMenuItem(`🔧 Repairing... ${Math.ceil(conn.repairTimer || 0)}s`, '');
+    } else {
+      addMenuItem('⛔ Trip line', 'trip-line');
+    }
     addMenuItem('Line settings', 'line-settings');
     addMenuSeparator();
     addMenuItem('Delete line', 'delete-line');
@@ -436,7 +444,21 @@ menu.addEventListener('click', (e) => {
   else if (a === 'add-junction') addNode('junction', wx, wy);
   else if (a === 'open-settings') settingsPanel.openSettings(id);
   else if (a === 'delete-node' && id) deleteNode(id);
-  else if (a === 'delete-line' && connId) {
+  else if (a === 'repair-line' && connId) {
+    const conn = state.connections.find(c => c.id === connId);
+    if (conn && conn.tripped) {
+      conn.repairing = true;
+      conn.repairTimer = conn.repairDuration || 15;
+      persister.persist(); renderer.draw(); hideMenu();
+    }
+  } else if (a === 'trip-line' && connId) {
+    const conn = state.connections.find(c => c.id === connId);
+    if (conn && !conn.tripped) {
+      conn.tripped = true;
+      conn.tripTimer = 0;
+      persister.persist(); renderer.draw(); hideMenu();
+    }
+  } else if (a === 'delete-line' && connId) {
     state.connections = state.connections.filter(c => c.id !== connId);
     engine.recomputeNetworks(); persister.persist(); renderer.draw();
   } else if (a === 'line-settings' && connId) {

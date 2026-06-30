@@ -68,20 +68,41 @@ export class Renderer {
     
     const sameNet = state.networks && state.networks.some(net => net.nodeIds.has(s.id) && net.nodeIds.has(t.id));
 
-    // Tripped line — dashed grey, skip color/progress
+    // Tripped or repairing line
     if (c.tripped) {
       const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
-      ctx.beginPath();
-      ctx.strokeStyle = '#999';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 4]);
-      ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
-      ctx.setLineDash([]);
-      // Dashed "X" mark at midpoint
       const siz = 4 * state.view.scale;
-      ctx.strokeStyle = '#666'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(mx - siz, my - siz); ctx.lineTo(mx + siz, my + siz); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(mx + siz, my - siz); ctx.lineTo(mx - siz, my + siz); ctx.stroke();
+      if (c.repairing) {
+        // Repairing — dashed yellow (pulsing), wrench icon at midpoint
+        const pulse = 0.5 + 0.5 * Math.sin(sim.simTime * 4);
+        ctx.beginPath();
+        ctx.strokeStyle = `rgba(230, 180, 50, ${0.5 + 0.5 * pulse})`;
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([6, 4]);
+        ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+        ctx.setLineDash([]);
+        // Wrench emoji at midpoint
+        ctx.font = `${Math.round(14 * state.view.scale)}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('🔧', mx, my + siz + 14 * state.view.scale);
+        // Timer label
+        if (state.view.scale > 0.5) {
+          ctx.font = `${Math.round(10 * state.view.scale)}px sans-serif`;
+          ctx.fillStyle = '#e6b432';
+          ctx.fillText(`${Math.ceil(c.repairTimer || 0)}s`, mx, my);
+        }
+      } else {
+        // Tripped — dashed red, 'X' at midpoint
+        ctx.beginPath();
+        ctx.strokeStyle = '#c0392b';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(mx - siz, my - siz); ctx.lineTo(mx + siz, my + siz); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(mx + siz, my - siz); ctx.lineTo(mx - siz, my + siz); ctx.stroke();
+      }
       continue;
     }
 
