@@ -188,124 +188,6 @@ export class SimulationEngine {
     state.marketLoad = marketRemaining;
   }
 
-  dispatchAgc(net) {
-    const { state, sim } = this.store;
-    const netNodes = [...net.nodeIds]
-      .map((id) => state.nodes.find((n) => n.id === id))
-      .filter(Boolean);
-    const gens = netNodes.filter(
-      (n) => n.type === "generator" && !n.tripped
-    );
-    const storages = netNodes.filter(
-      (n) => n.type === "storage" && !n.tripped
-    );
-
-    // Eligible gens: load-follow + balancing (no decay loop needed)
-    const eligibleGens = gens.filter(
-      (g) => g.mode === "load-follow" || g.mode === "balancing"
-    );
-    // Eligible storages: balancing, not energy-neutral
-    const eligibleStorages = storages.filter(
-      (s) => s.mode === "balancing" && !s.energyNeutral
-    );
-
-    if (eligibleGens.length === 0 && eligibleStorages.length === 0) return;
-
-    const freq = net.freq || 50;
-    // 50% improvement toward 50 Hz per cycle
-    const targetFreq = freq + (50 - freq) * 0.5;
-    const deltaFreq = freq - targetFreq; // positive = deficit (freq < target)
-
-    if (Math.abs(deltaFreq) < 0.001) return; // near-50, skip
-
-    // System stiffness: Σ(rating / (droop × 50)) for all gens
-    const K = gens.reduce(
-      (s, g) => s + (g.rating || 100) / ((g.droop || 0.04) * 50),
-      0
-    );
-    const deltaP = K * deltaFreq; // positive = need more MW (deficit)
-
-    // Distribute deltaP among eligible gens by upward/downward headroom
-    const isDeficit = deltaP > 0;
-
-    // --- Gens ---
-    if (eligibleGens.length > 0) {
-      const totalHeadroom = eligibleGens.reduce((s, g) => {
-        const rating = g.rating || 100;
-        const mw = g.mw || 0;
-        const fcr = g.fcrHeadroom || 10;
-        return (
-          s +
-          (isDeficit
-            ? Math.max(0, rating - mw - fcr)
-            : Math.max(0, mw - fcr))
-        );
-      }, 0);
-
-      if (totalHeadroom > 0) {
-        for (const gen of eligibleGens) {
-          const rating = gen.rating || 100;
-          const mw = gen.mw || 0;
-          const fcr = gen.fcrHeadroom || 10;
-          const h = isDeficit
-            ? Math.max(0, rating - mw - fcr)
-            : Math.max(0, mw - fcr);
-          if (h <= 0) {
-            gen.agcTarget = gen.agcTarget || 0;
-            continue;
-          }
-          const share = h / totalHeadroom;
-          const assigned = deltaP * share;
-          // Clamp: can't exceed rating - base in deficit direction, or base in surplus direction
-          const bc = gen.baselineContract || 0;
-          const maxTarget = isDeficit ? rating - bc : bc;
-          gen.agcTarget = Math.max(
-            isDeficit ? 0 : -maxTarget,
-            Math.min(isDeficit ? maxTarget : 0, assigned)
-          );
-        }
-      } else {
-        // No headroom — zero targets
-        for (const gen of eligibleGens) gen.agcTarget = 0;
-      }
-    }
-
-    // --- Storages ---
-    if (eligibleStorages.length > 0) {
-      // Storage stiffness uses discharge rate as effective rating
-      const totalStorHeadroom = eligibleStorages.reduce((s, st) => {
-        const dr = st.dischargeRate || 500;
-        const cr = st.chargeRate || 500;
-        const bc = st.baselineContract || 0;
-        return s + (isDeficit ? Math.max(0, dr - bc) : Math.max(0, bc + cr));
-      }, 0);
-
-      if (totalStorHeadroom > 0) {
-        for (const st of eligibleStorages) {
-          const dr = st.dischargeRate || 500;
-          const cr = st.chargeRate || 500;
-          const bc = st.baselineContract || 0;
-          const h = isDeficit
-            ? Math.max(0, dr - bc)
-            : Math.max(0, bc + cr);
-          if (h <= 0) {
-            st.agcTarget = st.agcTarget || 0;
-            continue;
-          }
-          const share = h / totalStorHeadroom;
-          const assigned = deltaP * share;
-          const maxTarget = isDeficit ? dr - bc : bc + cr;
-          st.agcTarget = Math.max(
-            isDeficit ? 0 : -maxTarget,
-            Math.min(isDeficit ? maxTarget : 0, assigned)
-          );
-        }
-      } else {
-        for (const st of eligibleStorages) st.agcTarget = 0;
-      }
-    }
-  }
-
   simTick() {
     const { state, sim, openPanels, freqChartVisible, meritChartVisible } =
       this.store;
@@ -330,11 +212,6 @@ export class SimulationEngine {
       sim.lastMarketPat = patSec;
       this.dispatchMeritOrder(true, false, mainNet);
       if (meritChartVisible) drawMeritOrderChart();
-    }
-    // === AGC dispatch (every 5 sim-minutes = 300 patSec) ===
-    if (mainNet && patSec - (sim.lastAgcPat || 0) >= 300) {
-      sim.lastAgcPat = patSec;
-      this.dispatchAgc(mainNet);
     }
     const f0 = 50;
     const dt = (1 / sim.tickHz) * sim.speed;
@@ -587,7 +464,7 @@ export class SimulationEngine {
               const dev = (subFreq - f0) / f0;
               const govMod = -(1 / droop) * dev * rating;
               totalTarget =
-                (gen.baselineContract || 0) + govMod + (gen.agcTarget || 0);
+                (gen.baselineContract || 0) + govMod + (gen.agcOffset || 0);
             }
             const genRating = gen.rating || Infinity;
             totalTarget = Math.max(0, Math.min(genRating, totalTarget));
@@ -601,6 +478,7 @@ export class SimulationEngine {
 
           // --- Step 2: Storage FCR ---
           for (const st of storages) {
+            if (st.energyNeutral) st.agcOffset = 0;
             const bc = st.baselineContract || 0;
             const soc = st.mw || 0;
             const cap = st.maxCapacity || 100;
@@ -617,7 +495,7 @@ const rampUpTC = st.rampUpTC || 0.1;
               const dev = (subFreq - f0) / f0;
               const effectiveRating = dr;
               const govMod = -(1 / droop) * dev * effectiveRating;
-              let target = bc + govMod + (st.agcTarget || 0);
+              let target = bc + govMod + (st.agcOffset || 0);
               target = Math.max(-cr, Math.min(dr, target));
               target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
               const prevResp = st.mwResponse || 0;
@@ -891,7 +769,97 @@ const rampUpTC = st.rampUpTC || 0.1;
             }
           }
 
+          // --- Step 8: AGC (gens) ---
+          const balancingGens = gens.filter((g) =>
+            (g.mode === "balancing" && (state.marginalGenIds.size === 0 || state.marginalGenIds.has(g.id))) ||
+            g.mode === "load-follow"
+          );
+          const freqErr = f0 - subFreqRef.value;
+          if (balancingGens.length > 0) {
+            const agcRateLimit = 5;
+            const maxDelta = agcRateLimit * physicsDt;
+            const totalAgc = 50 * freqErr * physicsDt;
 
+            for (const gen of balancingGens) {
+              const rating = gen.rating || 100;
+              const bc = gen.baselineContract || 0;
+              const fcr = gen.fcrHeadroom || 10;
+              let headroom;
+              if (freqErr >= 0) {
+                // Need upward correction (deficit) — share of upward headroom from actual output
+                headroom = Math.max(0, rating - (gen.mw || 0) - fcr);
+              } else {
+                // Need downward correction (surplus) — share of downward headroom from actual output
+                headroom = Math.max(0, (gen.mw || 0) - fcr);
+              }
+              if (headroom <= 0) continue;
+
+              // Total headroom in the needed direction
+              const totalDirHeadroom = balancingGens.reduce((s, g) => {
+                const r = g.rating || 100;
+                const m = g.mw || 0;
+                const c = g.fcrHeadroom || 10;
+                return (
+                  s +
+                  (freqErr >= 0 ? Math.max(0, r - m - c) : Math.max(0, m - c))
+                );
+              }, 0);
+              if (totalDirHeadroom <= 0) continue;
+
+              const share = headroom / totalDirHeadroom;
+              const agcDelta = totalAgc * share;
+              const clamped = Math.max(-maxDelta, Math.min(maxDelta, agcDelta));
+              if (Math.abs(clamped) > 0.0001) {
+                gen.agcOffset = (gen.agcOffset || 0) + clamped;
+                gen.agcOffset = Math.max(
+                  -bc,
+                  Math.min(rating - bc, gen.agcOffset),
+                );
+              }
+            }
+          }
+
+          // --- Step 8b: AGC (storage) ---
+          const balancingStorages = storages.filter(
+            (s) =>
+              s.mode === "balancing" &&
+              !s.energyNeutral &&
+              (s.dischargeRate || 500) > 0,
+          );
+          if (balancingStorages.length > 0) {
+            const agcRateLimit = 20;
+            const maxDelta = agcRateLimit * physicsDt;
+            const totalStorHeadroom = balancingStorages.reduce((s, st) => {
+              const bc = st.baselineContract || 0;
+              const dr = st.dischargeRate || 500;
+              const cr = st.chargeRate || 500;
+              return s + Math.max(0, dr - bc) + Math.max(0, bc + cr);
+            }, 0);
+            if (totalStorHeadroom > 0) {
+              const totalAgc = 100 * freqErr * physicsDt;
+              for (const st of balancingStorages) {
+                const bc = st.baselineContract || 0;
+                const dr = st.dischargeRate || 500;
+                const cr = st.chargeRate || 500;
+                const stHeadroom = Math.max(0, dr - bc) + Math.max(0, bc + cr);
+                const share = stHeadroom / totalStorHeadroom;
+                const agcDelta = totalAgc * share;
+                const clamped = Math.max(
+                  -maxDelta,
+                  Math.min(maxDelta, agcDelta),
+                );
+                if (Math.abs(clamped) > 0.0001) {
+                  st.agcOffset = (st.agcOffset || 0) + clamped;
+                  const maxStAgc = dr - bc - (st.fcrHeadroom || 10);
+                  const minStAgc = -(cr + bc - (st.fcrHeadroom || 10));
+                  st.agcOffset = Math.max(
+                    minStAgc,
+                    Math.min(maxStAgc, st.agcOffset),
+                  );
+                }
+              }
+            }
+          }
         }
         // Sync network freq from sub-step ref at end of all physics sub-steps
         net.freq = subFreqRef.value;
