@@ -778,7 +778,7 @@ const rampUpTC = st.rampUpTC || 0.1;
           if (balancingGens.length > 0) {
             const agcRateLimit = 5;
             const maxDelta = agcRateLimit * physicsDt;
-            const totalAgc = 50 * freqErr * physicsDt;
+            const totalAgc = 200 * freqErr * physicsDt;
 
             for (const gen of balancingGens) {
               const rating = gen.rating || 100;
