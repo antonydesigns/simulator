@@ -736,7 +736,10 @@ export class SimulationEngine {
 
           // --- Step 8b: AGC (storage) ---
           const balancingStorages = storages.filter(
-            (s) => s.mode === "balancing" && (s.dischargeRate || 500) > 0,
+            (s) =>
+              s.mode === "balancing" &&
+              s.agcEnabled !== false &&
+              (s.dischargeRate || 500) > 0,
           );
           if (balancingStorages.length > 0) {
             const agcRateLimit = 20;
@@ -871,9 +874,12 @@ export class SimulationEngine {
         if (entry.socEl)
           entry.socEl.textContent = (st.mw || 0).toFixed(2) + " MWh";
         if (entry.modeSelect) entry.modeSelect.value = st.mode || "balancing";
-        // Show/hide baseline contract group for grid-forming mode
+        // Show/hide groups based on mode
         const baselineGroup = entry.panel?.querySelector('.storage-baseline-group');
         if (baselineGroup) baselineGroup.style.display = st.mode === 'grid-forming' ? '' : 'none';
+        if (entry.afcrGroup) entry.afcrGroup.style.display = st.mode === 'balancing' ? '' : 'none';
+        if (entry.agcRow) entry.agcRow.style.display = st.mode === 'balancing' ? '' : 'none';
+        if (entry.outputGroup) entry.outputGroup.style.display = st.mode === 'balancing' ? '' : 'none';
         if (entry.fcrSlider && entry.fcrVal) {
           entry.fcrSlider.value = st.fcrHeadroom || 10;
           entry.fcrVal.textContent = Math.round(st.fcrHeadroom || 10) + " MW";
@@ -883,6 +889,9 @@ export class SimulationEngine {
           entry.droopVal.textContent =
             Math.round((st.droop || 0.04) * 100) + "%";
         }
+        // Sync AGC toggle
+        const agcToggle = entry.panel?.querySelector('.agc-toggle-storage');
+        if (agcToggle) agcToggle.checked = st.agcEnabled !== false;
         if (entry.bcSlider && entry.bcVal) {
           entry.bcSlider.value = st.baselineContract || 0;
           entry.bcVal.textContent =
@@ -890,6 +899,20 @@ export class SimulationEngine {
               ? "+" + Math.round(st.baselineContract || 0) + " MW"
               : Math.round(st.baselineContract || 0) + " MW";
         }
+        // Refresh output breakdown for balancing storage
+        const stFreq = (state.networks?.find(n => n.nodeIds?.has(st.id))?.freq) || state.frequency || 50;
+        const stDr = st.dischargeRate || 50;
+        const stCr = st.chargeRate || 50;
+        const stBc = st.baselineContract || 0;
+        const stGovMod = -(1 / (st.droop || 0.04)) * ((stFreq - 50) / 50) * Math.max(stDr, stCr);
+        const stOutput = entry.panel?.querySelector('.stor-output');
+        const stBaseEl = entry.panel?.querySelector('.stor-output-base');
+        const stFcrEl = entry.panel?.querySelector('.stor-output-fcr');
+        const stAgcEl = entry.panel?.querySelector('.stor-output-agc');
+        if (stOutput) stOutput.textContent = Math.round(st.mwResponse || 0) + " MW";
+        if (stBaseEl) stBaseEl.textContent = (stBc >= 0 ? '+' : '') + Math.round(stBc);
+        if (stFcrEl) stFcrEl.textContent = '+' + Math.round(stGovMod);
+        if (stAgcEl) stAgcEl.textContent = ((st.agcOffset || 0) >= 0 ? '+' : '') + Math.round(st.agcOffset || 0);
         if (entry.shutdownBtn) {
           entry.shutdownBtn.textContent = st.tripped
             ? "🔄 Restart"

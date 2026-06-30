@@ -345,6 +345,21 @@ export class SettingsPanel {
       <div class="settings-header"><span class="settings-title">Storage ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
         <div class="settings-row"><label class="settings-label">State of Charge</label><div class="settings-slider-group"><input type="range" class="soc-slider" min="0" max="${cap}" step="0.1" value="${socVal}"><span class="settings-value-display storage-soc">${socVal} MWh</span></div></div>
+        <div class="storage-output-group" style="display:${mode === 'balancing' ? '' : 'none'}">
+          <div class="settings-row">
+            <label class="settings-label">Output</label>
+            <div class="settings-slider-group" style="justify-content:flex-end;">
+              <span class="stor-output" style="font-size:14px;font-weight:600;">${Math.round(node.mwResponse || 0)} MW</span>
+            </div>
+          </div>
+          <div class="settings-row" style="margin-top:-4px">
+            <div style="display:flex;gap:10px;font-size:11px;color:#999;padding-left:2px">
+              <span>Base <span class="stor-output-base">${(node.baselineContract || 0) >= 0 ? '+' : ''}${Math.round(node.baselineContract || 0)}</span></span>
+              <span>FCR <span class="stor-output-fcr">+${Math.round(-(1 / (node.droop || 0.04)) * ((state.frequency || 50) - 50) / 50 * Math.max(dchgR, chgR))}</span></span>
+              <span>AGC <span class="stor-output-agc">${(node.agcOffset || 0) >= 0 ? '+' : ''}${Math.round(node.agcOffset || 0)}</span></span>
+            </div>
+          </div>
+        </div>
         <div class="settings-row"><label class="settings-label">Mode</label>
           <div class="settings-slider-group">
             <select class="storage-mode-select">
@@ -356,9 +371,19 @@ export class SettingsPanel {
         <div class="storage-baseline-group" style="display:${mode === 'grid-forming' ? '' : 'none'}">
           <div class="settings-row"><label class="settings-label">Baseline Contract</label><div class="settings-slider-group"><input type="range" class="baseline-contract-slider" min="${-chgR}" max="${dchgR}" step="1" value="${node.baselineContract || 0}"><span class="baseline-contract-value">${(node.baselineContract || 0) >= 0 ? '+' : ''}${node.baselineContract || 0} MW</span></div></div>
         </div>
-        <div class="storage-fcr-group">
+        <div class="storage-afcr-group" style="display:${mode === 'balancing' ? '' : 'none'}">
+          <div class="settings-row"><label class="settings-label">Frequency Containment Reserve</label><div class="settings-slider-group"><span style="font-size:12px;color:#999">enabled</span></div></div>
           <div class="settings-row"><label class="settings-label">FCR Headroom</label><div class="settings-slider-group"><input type="range" class="fcr-headroom-slider" min="1" max="${Math.max(chgR, dchgR)}" step="1" value="${fcr}"><span class="fcr-headroom-value">${fcr} MW</span></div></div>
           <div class="settings-row"><label class="settings-label">Droop</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="0.5" max="20" step="0.5" value="${drop}"><span class="droop-value">${drop}%</span></div></div>
+        </div>
+        <div class="settings-row agc-row-storage" style="display:${mode === 'balancing' ? '' : 'none'}">
+          <label class="settings-label">Automatic Frequency Restoration Reserve</label>
+          <div class="settings-slider-group">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font-size:12px;color:#aaa">
+              <input type="checkbox" class="agc-toggle-storage" ${node.agcEnabled !== false ? 'checked' : ''}>
+              <span>enabled</span>
+            </label>
+          </div>
         </div>
         <div class="settings-row"><label class="settings-label">Discharge Rate</label><div class="settings-slider-group"><input type="range" class="discharge-slider" min="1" max="500" step="1" value="${dchgR}"><span class="discharge-value">${dchgR} MW</span></div></div>
         <div class="settings-row"><label class="settings-label">Charge Rate</label><div class="settings-slider-group"><input type="range" class="charge-slider" min="1" max="500" step="1" value="${chgR}"><span class="charge-value">${chgR} MW</span></div></div>
@@ -373,6 +398,9 @@ export class SettingsPanel {
     entry.mwRespEl = panel.querySelector('.storage-mw-response');
     entry.modeSelect = panel.querySelector('.storage-mode-select');
     entry.fcrGroup = panel.querySelector('.storage-fcr-group');
+    entry.afcrGroup = panel.querySelector('.storage-afcr-group');
+    entry.agcRow = panel.querySelector('.agc-row-storage');
+    entry.outputGroup = panel.querySelector('.storage-output-group');
     entry.panel = panel;
 
     // SoC slider
@@ -380,11 +408,14 @@ export class SettingsPanel {
     socSlider.addEventListener('input', () => { const v = parseFloat(socSlider.value); node.mw = Math.min(v, node.maxCapacity || 100); entry.socEl.textContent = v.toFixed(2) + ' MWh'; });
     socSlider.addEventListener('change', () => this.persister.persist());
 
-    // Mode select — shows baseline contract only for grid-forming
+    // Mode select — shows baseline contract for grid-forming, FCR+AGC for balancing
     const baselineGroup = panel.querySelector('.storage-baseline-group');
     entry.modeSelect.addEventListener('change', () => {
       node.mode = entry.modeSelect.value;
       if (baselineGroup) baselineGroup.style.display = node.mode === 'grid-forming' ? '' : 'none';
+      if (entry.afcrGroup) entry.afcrGroup.style.display = node.mode === 'balancing' ? '' : 'none';
+      if (entry.agcRow) entry.agcRow.style.display = node.mode === 'balancing' ? '' : 'none';
+      if (entry.outputGroup) entry.outputGroup.style.display = node.mode === 'balancing' ? '' : 'none';
       this.persister.persist();
     });
 
@@ -431,6 +462,15 @@ export class SettingsPanel {
     entry.droopVal = droopVal;
     droopSlider.addEventListener('input', () => { const v = parseFloat(droopSlider.value); droopVal.textContent = v + '%'; node.droop = v / 100; });
     droopSlider.addEventListener('change', () => this.persister.persist());
+
+    // AGC toggle (balancing storage only)
+    const agcToggle = panel.querySelector('.agc-toggle-storage');
+    if (agcToggle) {
+      agcToggle.addEventListener('change', () => {
+        node.agcEnabled = agcToggle.checked;
+        this.persister.persist();
+      });
+    }
 
     // Ramp TC sliders
     const rampUpSlider = panel.querySelector('.ramp-up-slider'), rampUpVal = panel.querySelector('.ramp-up-value');

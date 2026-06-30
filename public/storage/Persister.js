@@ -45,6 +45,7 @@ export class Persister {
           if (n.rampRate !== undefined) delete n.rampRate;
           if (n.baselineContract === undefined) n.baselineContract = 0;
           if (n.fcrHeadroom === undefined) n.fcrHeadroom = 10;
+        if (n.agcEnabled === undefined) n.agcEnabled = true;
           if (n.bidPrice === undefined) n.bidPrice = 50;
           if (n.committedMW === undefined) n.committedMW = n.bidQty || n.rating || 100;
           if (n.agcOffset === undefined) n.agcOffset = 0;
