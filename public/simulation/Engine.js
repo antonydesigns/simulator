@@ -1076,7 +1076,6 @@ const rampUpTC = st.rampUpTC || 0.1;
         if (node.type === "generator") {
           entry.nodes[node.id].baselineContract = node.baselineContract || 0;
           entry.nodes[node.id].agcOffset = node.agcOffset || 0;
-          entry.nodes[node.id].agcTarget = node.agcTarget || 0;
           entry.nodes[node.id].mode = node.mode || "balancing";
           entry.nodes[node.id].rating = node.rating || 100;
           entry.nodes[node.id].droop = node.droop || 0.04;
@@ -1092,7 +1091,6 @@ const rampUpTC = st.rampUpTC || 0.1;
           entry.nodes[node.id].maxCapacity = node.maxCapacity || 100;
           entry.nodes[node.id].baselineContract = node.baselineContract || 0;
           entry.nodes[node.id].agcOffset = node.agcOffset || 0;
-          entry.nodes[node.id].agcTarget = node.agcTarget || 0;
         }
       }
       // Capture connection states
@@ -1154,7 +1152,6 @@ const rampUpTC = st.rampUpTC || 0.1;
     // Reset trips, shedding, FCR/AGC offsets — but keep baselines intact
     for (const gen of state.nodes.filter((n) => n.type === "generator")) {
       gen.agcOffset = 0;
-      gen.agcTarget = 0;
       gen.mw = gen.baselineContract || 0;
       gen.tripped = false;
       gen.freqTimer = 0;
@@ -1162,7 +1159,6 @@ const rampUpTC = st.rampUpTC || 0.1;
     for (const st of state.nodes.filter((n) => n.type === "storage")) {
       st.mwResponse = st.baselineContract || 0;
       st.agcOffset = 0;
-      st.agcTarget = 0;
       st.freqRestore = 0;
       st.tripped = false;
     }

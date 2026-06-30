@@ -104,7 +104,7 @@ export class StatsPanel {
       html += '</div>';
       const dev = (islandFreq - 50) / 50;
       const govMod = -(1 / (gen.droop || 0.04)) * dev * (gen.rating || 100);
-      const agcComp = gen.agcTarget || 0;
+      const agcComp = gen.agcOffset || 0;
       const genExpanded = state.statsBreakdownExpanded.has(gen.id);
       if (genExpanded) {
         html += '<div class="stats-breakdown-row">';
@@ -143,7 +143,7 @@ export class StatsPanel {
         const bc = st.baselineContract || 0;
         const sDev = (islandFreq - 50) / 50;
         const sGovMod = -(1 / (st.droop || 0.04)) * sDev * (st.dischargeRate || 500);
-        const sAgc = st.agcTarget || 0;
+        const sAgc = st.agcOffset || 0;
         const stExpanded = state.statsBreakdownExpanded.has(st.id);
         if (stExpanded) {
           html += '<div class="stats-breakdown-row">';
