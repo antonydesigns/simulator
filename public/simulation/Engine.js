@@ -70,7 +70,7 @@ export class SimulationEngine {
     // --- Step 1: Fixed gens (must-run at baselineContract) ---
     for (const gen of allGens) {
       if (gen.mode === "fixed") {
-        const alloc = Math.min(gen.baselineContract || 0, gen.rating || Infinity);
+        const alloc = Math.min(gen.committedMW || 0, gen.rating || Infinity);
         gen.baselineContract = alloc;
         if (writeMw) gen.mw = alloc;
         remaining -= alloc;
