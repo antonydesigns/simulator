@@ -50,42 +50,20 @@ export class SimulationEngine {
     const allGens = state.nodes.filter(
       (n) => n.type === "generator" && !n.tripped && inNet(n),
     );
+    const allStorages = state.nodes.filter(
+      (n) => n.type === "storage" && !n.tripped && inNet(n),
+    );
     // Reset baselines for market gens only (fixed/load-follow keep their allocated baseline)
     for (const gen of allGens) {
       if (gen.mode === "merchant" || gen.mode === "balancing") gen.baselineContract = 0;
     }
-    // Reset merchant storage baselines too
-    const allStorages = state.nodes.filter(
-      (n) => n.type === "storage" && !n.tripped && n.mode === "merchant" && inNet(n)
-    );
-    for (const st of allStorages) {
-      st.baselineContract = 0;
-    }
+    // Merchant storage reset removed — balancing/grid-forming don't need baseline reset in dispatch
 
     const loadTotal = state.nodes
       .filter((n) => n.type === "load" && inNet(n))
       .reduce((s, l) => s + (l.mw || 0), 0);
-    // Add charging demand from merchant storage with active buy contracts
-    const patSec2 = sim.simTime * 720;
-    const tod2 = ((patSec2 % 86400) / 86400) * 24;
-    const stChargeDemand = allStorages
-      .filter((st) => {
-        const trigger = st.buyTrigger || "off";
-        if (trigger === "off") return false;
-        const buyByPrice = (trigger === "price" || trigger === "both") && (state.smp != null) && state.smp <= (st.buyPrice || 20);
-        let buyByTime = false;
-        if (trigger === "time" || trigger === "both") {
-          const start = st.buyStartHour || 3;
-          const dur = st.buyDuration || 4;
-          if (dur > 0) {
-            if (start + dur <= 24) buyByTime = tod2 >= start && tod2 < start + dur;
-            else buyByTime = tod2 >= start || tod2 < ((start + dur) % 24);
-          }
-        }
-        return buyByPrice || buyByTime;
-      })
-      .reduce((s, st) => s + Math.max(0, -(st.mwResponse || 0)), 0);
-    const totalLoad = loadTotal + stChargeDemand;
+    // Merchant storage removed — no charging demand on load side
+    const totalLoad = loadTotal;
     let remaining = totalLoad;
     let smp = 0;
 
@@ -114,7 +92,7 @@ export class SimulationEngine {
       remaining -= lfTotal;
     }
 
-    // Build merit order: non-fixed gens + merchant storage with sell triggers
+    // Build merit order: all market gens (excl. fixed, load-follow)
     const bids = [];
     // Generator bids
     for (const gen of allGens) {
@@ -125,29 +103,7 @@ export class SimulationEngine {
         qty: gen.committedMW || gen.rating || 100,
       });
     }
-    // Storage sell bids (merchant mode)
-    const patSec = sim.simTime * 720;
-    const tod = ((patSec % 86400) / 86400) * 24;
-    for (const st of allStorages) {
-      if (st.sellTrigger === "off") continue;
-      // Check time window for time-based triggers
-      if (st.sellTrigger === "time" || st.sellTrigger === "both") {
-        const start = st.sellStartHour || 17;
-        const dur = st.sellDuration || 4;
-        let inWindow = false;
-        if (dur > 0) {
-          if (start + dur <= 24) inWindow = tod >= start && tod < start + dur;
-          else inWindow = tod >= start || tod < ((start + dur) % 24);
-        }
-        if (st.sellTrigger === "time" && !inWindow) continue;
-        if (st.sellTrigger === "both" && !inWindow) continue;
-      }
-      const dr = st.dischargeRate || 50;
-      const soc = st.mw || 0;
-      if (soc <= 0) continue;
-      const qty = dr;
-      bids.push({ node: st, price: st.sellPrice || 50, qty });
-    }
+    // Storage sell bids — merchant mode removed; balancing/grid-forming don't bid into merit order
     // Sort by price (cheapest first)
     bids.sort((a, b) => a.price - b.price);
 
@@ -182,8 +138,6 @@ export class SimulationEngine {
       if (gen.mode === "merchant") gen.agcOffset = 0;
     }
     for (const st of allStorages) st.agcOffset = 0;
-    // Reset balancing storages too (not in merchant scope)
-    for (const st of state.nodes.filter(n => n.type === "storage" && !n.tripped && n.mode === "balancing" && inNet(n))) st.agcOffset = 0;
 
     state.marketLoad = marketRemaining;
   }
@@ -470,8 +424,6 @@ export class SimulationEngine {
 
           // --- Step 2: Storage FCR ---
           for (const st of storages) {
-            if (st.energyNeutral) st.agcOffset = 0;
-            const bc = st.baselineContract || 0;
             const soc = st.mw || 0;
             const cap = st.maxCapacity || 100;
             const cr = st.chargeRate || 50;
@@ -479,8 +431,8 @@ export class SimulationEngine {
             const maxDischargeP = soc / (physicsDt / 3600);
             const maxChargeP = (cap - soc) / (physicsDt / 3600);
 
-const rampUpTC = st.rampUpTC || 0.1;
-              const rampDownTC = st.rampDownTC || 0.1;
+            const rampUpTC = st.rampUpTC || 0.1;
+            const rampDownTC = st.rampDownTC || 0.1;
 
             if (st.mode === "balancing") {
               const droop = st.droop || 0.04;
@@ -490,18 +442,8 @@ const rampUpTC = st.rampUpTC || 0.1;
               st.freqRestore =
                 (st.freqRestore || 0) + 20 * (f0 - subFreq) * physicsDt;
               st.freqRestore = Math.max(-dr, Math.min(dr, st.freqRestore));
-              let target = bc + govMod + st.freqRestore + (st.agcOffset || 0);
-              target = Math.max(-cr, Math.min(dr, target));
-              target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
-              const prevResp = st.mwResponse || 0;
-              const rt = target >= prevResp ? rampUpTC : rampDownTC;
-              st.mwResponse =
-                prevResp + (target - prevResp) * Math.min(1, physicsDt / rt);
-            } else if (st.mode === "fcr-only") {
-              const droop = st.droop || 0.04;
-              const dev = (subFreq - f0) / f0;
-              const govMod = -(1 / droop) * dev * dr;
-              let target = bc + govMod;
+              // Balancing mode: no baseline contract — pure regulation (FCR + freqRestore + AGC)
+              let target = govMod + st.freqRestore + (st.agcOffset || 0);
               target = Math.max(-cr, Math.min(dr, target));
               target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
               const prevResp = st.mwResponse || 0;
@@ -515,51 +457,14 @@ const rampUpTC = st.rampUpTC || 0.1;
               st.freqRestore =
                 (st.freqRestore || 0) + 5 * (f0 - subFreq) * physicsDt;
               st.freqRestore = Math.max(-dr, Math.min(dr, st.freqRestore));
-              let target = bc + govMod + st.freqRestore;
+              // Grid-forming: uses baselineContract as schedule anchor, plus FCR + freqRestore
+              let target = (st.baselineContract || 0) + govMod + st.freqRestore;
               target = Math.max(-cr, Math.min(dr, target));
               target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
               const prevResp = st.mwResponse || 0;
               const rt = target >= prevResp ? rampUpTC : rampDownTC;
               st.mwResponse =
                 prevResp + (target - prevResp) * Math.min(1, physicsDt / rt);
-            } else if (st.mode === "fixed") {
-              let target = bc + (st.fixedTarget || 0);
-              target = Math.max(-cr, Math.min(dr, target));
-              target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
-              const prevResp = st.mwResponse || 0;
-              const rt = target >= prevResp ? rampUpTC : rampDownTC;
-              st.mwResponse =
-                prevResp + (target - prevResp) * Math.min(1, physicsDt / rt);
-            } else if (st.mode === "merchant") {
-              const smp = this.store.state.smp;
-              const patSec = sim.simTime * 720;
-              const tod = ((patSec % 86400) / 86400) * 24;
-              // Sell contract: dispatched by merit order (baselineContract)
-              const sellDispatch = Math.max(0, st.baselineContract || 0);
-              // Buy contract: real-time check
-              let buyActive = false;
-              const stBuy = st.buyTrigger || "off";
-              if (stBuy !== "off") {
-                const buyByPrice = (stBuy === "price" || stBuy === "both") && smp !== null && smp <= (st.buyPrice || 20);
-                let buyByTime = false;
-                if (stBuy === "time" || stBuy === "both") {
-                  const start = st.buyStartHour || 3;
-                  const dur = st.buyDuration || 4;
-                  if (dur > 0) {
-                    if (start + dur <= 24) buyByTime = tod >= start && tod < start + dur;
-                    else buyByTime = tod >= start || tod < ((start + dur) % 24);
-                  }
-                }
-                buyActive = buyByPrice || buyByTime;
-              }
-              let target = 0;
-              if (sellDispatch > 0) target += sellDispatch;
-              else if (buyActive) target -= cr;
-              target = Math.max(-cr, Math.min(dr, target));
-              target = Math.max(-maxChargeP, Math.min(maxDischargeP, target));
-              const prevResp = st.mwResponse || 0;
-              const rt = target >= prevResp ? rampUpTC : rampDownTC;
-              st.mwResponse = prevResp + (target - prevResp) * Math.min(1, physicsDt / rt);
             }
             st.mw = Math.max(
               0,
@@ -817,27 +722,23 @@ const rampUpTC = st.rampUpTC || 0.1;
 
           // --- Step 8b: AGC (storage) ---
           const balancingStorages = storages.filter(
-            (s) =>
-              s.mode === "balancing" &&
-              !s.energyNeutral &&
-              (s.dischargeRate || 500) > 0,
+            (s) => s.mode === "balancing" && (s.dischargeRate || 500) > 0,
           );
           if (balancingStorages.length > 0) {
             const agcRateLimit = 20;
             const maxDelta = agcRateLimit * physicsDt;
+            // Balancing storage: no baselineContract — full charge/discharge range is headroom
             const totalStorHeadroom = balancingStorages.reduce((s, st) => {
-              const bc = st.baselineContract || 0;
               const dr = st.dischargeRate || 500;
               const cr = st.chargeRate || 500;
-              return s + Math.max(0, dr - bc) + Math.max(0, bc + cr);
+              return s + dr + cr;
             }, 0);
             if (totalStorHeadroom > 0) {
               const totalAgc = 400 * freqErr * physicsDt;
               for (const st of balancingStorages) {
-                const bc = st.baselineContract || 0;
                 const dr = st.dischargeRate || 500;
                 const cr = st.chargeRate || 500;
-                const stHeadroom = Math.max(0, dr - bc) + Math.max(0, bc + cr);
+                const stHeadroom = dr + cr;
                 const share = stHeadroom / totalStorHeadroom;
                 const agcDelta = totalAgc * share;
                 const clamped = Math.max(
@@ -846,8 +747,8 @@ const rampUpTC = st.rampUpTC || 0.1;
                 );
                 if (Math.abs(clamped) > 0.0001) {
                   st.agcOffset = (st.agcOffset || 0) + clamped;
-                  const maxStAgc = dr - bc - (st.fcrHeadroom || 10);
-                  const minStAgc = -(cr + bc - (st.fcrHeadroom || 10));
+                  const maxStAgc = dr - (st.fcrHeadroom || 10);
+                  const minStAgc = -(cr - (st.fcrHeadroom || 10));
                   st.agcOffset = Math.max(
                     minStAgc,
                     Math.min(maxStAgc, st.agcOffset),
@@ -955,20 +856,10 @@ const rampUpTC = st.rampUpTC || 0.1;
         const entry = openPanels[nodeId];
         if (entry.socEl)
           entry.socEl.textContent = (st.mw || 0).toFixed(2) + " MWh";
-        if (entry.mwRespEl)
-          entry.mwRespEl.textContent =
-            (st.mwResponse || 0) >= 0
-              ? "+" + Math.round(st.mwResponse || 0) + " MW"
-              : Math.round(st.mwResponse || 0) + " MW";
         if (entry.modeSelect) entry.modeSelect.value = st.mode || "balancing";
-        if (entry.fcrGroup)
-          entry.fcrGroup.style.display =
-            st.mode === "balancing" || st.mode === "fcr-only" || st.mode === "load-follow" ? "" : "none";
-        if (entry.fixedGroup)
-          entry.fixedGroup.style.display = st.mode === "fixed" ? "" : "none";
-        if (entry.neutralGroup)
-          entry.neutralGroup.style.display =
-            st.mode === "balancing" ? "" : "none";
+        // Show/hide baseline contract group for grid-forming mode
+        const baselineGroup = entry.panel?.querySelector('.storage-baseline-group');
+        if (baselineGroup) baselineGroup.style.display = st.mode === 'grid-forming' ? '' : 'none';
         if (entry.fcrSlider && entry.fcrVal) {
           entry.fcrSlider.value = st.fcrHeadroom || 10;
           entry.fcrVal.textContent = Math.round(st.fcrHeadroom || 10) + " MW";
@@ -977,13 +868,6 @@ const rampUpTC = st.rampUpTC || 0.1;
           entry.droopSlider.value = (st.droop || 0.04) * 100;
           entry.droopVal.textContent =
             Math.round((st.droop || 0.04) * 100) + "%";
-        }
-        if (entry.fixedSlider && entry.fixedVal) {
-          entry.fixedSlider.value = st.fixedTarget || 0;
-          entry.fixedVal.textContent =
-            (st.fixedTarget || 0) >= 0
-              ? "+" + Math.round(st.fixedTarget || 0) + " MW"
-              : Math.round(st.fixedTarget || 0) + " MW";
         }
         if (entry.bcSlider && entry.bcVal) {
           entry.bcSlider.value = st.baselineContract || 0;
@@ -1171,7 +1055,7 @@ const rampUpTC = st.rampUpTC || 0.1;
         load.baseMw = load.mw;
       }
     }
-    // Re-dispatch merchant bids and top up with balancing storage
+    // Re-dispatch and top up with balancing storage
     sim.settlingTimer = 3.0;
     // Find main network (one with loads) for restart dispatch
     const restartMainNet = state.networks.find(net => {

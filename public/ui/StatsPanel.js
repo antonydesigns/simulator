@@ -513,9 +513,7 @@ export class StatsPanel {
           : (g.committedMW || g.rating || 100),
         label: g.shortId || g.id.slice(-5),
       }));
-    const stors = state.nodes.filter(n => n.type === 'storage' && !n.tripped && n.mode === 'merchant' && n.sellTrigger !== 'off');
     const bids = genBids
-      .concat(stors.map(s => ({ price: s.sellPrice || 50, qty: Math.min(s.dischargeRate || 50, Math.max(0, s.mw || 0)), label: (s.shortId || s.id.slice(-5)) })))
       .sort((a, b) => a.price - b.price);
     if (!bids.length) { ctx.restore(); return; }
 
@@ -589,25 +587,7 @@ export class StatsPanel {
       }
       cx += bw;
     }    // Demand vertical line
-    const loadOnly = state.nodes.filter(n => n.type === 'load').reduce((s, l) => s + (l.mw || 0), 0);
-    const patSec = (state.simTime || 0) * 720;
-    const tod = ((patSec % 86400) / 86400) * 24;
-    const stChargeDemand = state.nodes.filter(n => n.type === 'storage' && !n.tripped && n.mode === 'merchant').filter(st => {
-      const trigger = st.buyTrigger || 'off';
-      if (trigger === 'off') return false;
-      const buyByPrice = (trigger === 'price' || trigger === 'both') && (state.smp != null) && state.smp <= (st.buyPrice || 20);
-      let buyByTime = false;
-      if (trigger === 'time' || trigger === 'both') {
-        const start = st.buyStartHour || 3;
-        const dur = st.buyDuration || 4;
-        if (dur > 0) {
-          if (start + dur <= 24) buyByTime = tod >= start && tod < start + dur;
-          else buyByTime = tod >= start || tod < ((start + dur) % 24);
-        }
-      }
-      return buyByPrice || buyByTime;
-    }).reduce((s, st) => s + Math.max(0, -(st.mwResponse || 0)), 0);
-    const totalLoad = loadOnly + stChargeDemand;
+    const totalLoad = state.nodes.filter(n => n.type === 'load').reduce((s, l) => s + (l.mw || 0), 0);
     const demandX = pad + Math.min((totalLoad / maxQty) * pw, pw);
     ctx.strokeStyle = '#4a90d9';
     ctx.lineWidth = 1.5;

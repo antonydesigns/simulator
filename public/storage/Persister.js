@@ -76,15 +76,7 @@ export class Persister {
           if (n.mode === undefined) n.mode = 'balancing';
           if (n.fcrHeadroom === undefined) n.fcrHeadroom = 10;
           if (n.droop === undefined) n.droop = 0.04;
-          if (n.fixedTarget === undefined) n.fixedTarget = 0;
-          if (n.sellTrigger === undefined) n.sellTrigger = "off";
-          if (n.sellPrice === undefined) n.sellPrice = 50;
-          if (n.sellStartHour === undefined) n.sellStartHour = 17;
-          if (n.sellDuration === undefined) n.sellDuration = 4;
-          if (n.buyTrigger === undefined) n.buyTrigger = "off";
-          if (n.buyPrice === undefined) n.buyPrice = 20;
-          if (n.buyStartHour === undefined) n.buyStartHour = 3;
-          if (n.buyDuration === undefined) n.buyDuration = 4;
+          // Merchant/fixed defaults removed — only balancing & grid-forming now
           if (n.rampUpTC === undefined) n.rampUpTC = 0.1;
           if (n.rampDownTC === undefined) n.rampDownTC = 0.1;
           // Assign shortId if missing

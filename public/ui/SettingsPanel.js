@@ -339,95 +339,32 @@ export class SettingsPanel {
     const cap = node.maxCapacity || 100;
     const fcr = node.fcrHeadroom || 10;
     const drop = Math.round((node.droop || 0.04) * 100);
-    const ft = node.fixedTarget || 0;
     const mode = node.mode || 'balancing';
 
     panel.innerHTML = `
       <div class="settings-header"><span class="settings-title">Storage ${tag}</span><span class="settings-close" data-action="close-settings">&times;</span></div>
       <div class="settings-body">
         <div class="settings-row"><label class="settings-label">State of Charge</label><div class="settings-slider-group"><input type="range" class="soc-slider" min="0" max="${cap}" step="0.1" value="${socVal}"><span class="settings-value-display storage-soc">${socVal} MWh</span></div></div>
-        <div class="storage-fcr-group">
+        <div class="settings-row"><label class="settings-label">Mode</label>
+          <div class="settings-slider-group">
+            <select class="storage-mode-select">
+              <option value="balancing" ${mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option>
+              <option value="grid-forming" ${mode === 'grid-forming' ? 'selected' : ''}>Grid Forming</option>
+            </select>
+          </div>
+        </div>
+        <div class="storage-baseline-group" style="display:${mode === 'grid-forming' ? '' : 'none'}">
           <div class="settings-row"><label class="settings-label">Baseline Contract</label><div class="settings-slider-group"><input type="range" class="baseline-contract-slider" min="${-chgR}" max="${dchgR}" step="1" value="${node.baselineContract || 0}"><span class="baseline-contract-value">${(node.baselineContract || 0) >= 0 ? '+' : ''}${node.baselineContract || 0} MW</span></div></div>
+        </div>
+        <div class="storage-fcr-group">
           <div class="settings-row"><label class="settings-label">FCR Headroom</label><div class="settings-slider-group"><input type="range" class="fcr-headroom-slider" min="1" max="${Math.max(chgR, dchgR)}" step="1" value="${fcr}"><span class="fcr-headroom-value">${fcr} MW</span></div></div>
           <div class="settings-row"><label class="settings-label">Droop</label><div class="settings-slider-group"><input type="range" class="droop-slider" min="0.5" max="20" step="0.5" value="${drop}"><span class="droop-value">${drop}%</span></div></div>
-        </div>
-        <div class="storage-neutral-group" style="display:${mode === 'balancing' ? '' : 'none'}">
-          <div class="settings-row" title="When enabled, AGC offset slowly decays to zero after frequency stabilizes (~60s). Prevents SoC drift and frees headroom by letting other units absorb the imbalance. Only active in Balancing mode.">
-            <label class="settings-label" style="font-size:11px">Energy-Neutrality ⓘ</label>
-            <div class="settings-slider-group">
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;font-size:12px;color:#aaa">
-                <input type="checkbox" class="energy-neutral-checkbox" ${node.energyNeutral ? 'checked' : ''}>
-                <span>return to baseline after disturbance</span>
-              </label>
-            </div>
-          </div>
-        </div>
-        <div class="storage-fixed-group" style="display:${mode === 'fixed' ? '' : 'none'}">
-          <div class="settings-row"><label class="settings-label">Target</label><div class="settings-slider-group"><input type="range" class="fixed-target-slider" min="${-chgR}" max="${dchgR}" step="1" value="${ft}"><span class="fixed-target-value">${ft >= 0 ? '+' : ''}${ft} MW</span></div></div>
-        </div>
-        <div class="storage-merchant-group" style="display:${mode === 'merchant' ? '' : 'none'};border-top:1px solid #333;margin-top:6px;padding-top:6px">
-          <div class="settings-row" style="font-size:11px;color:#888;font-weight:600;margin-bottom:2px">-- Sell Contract --</div>
-          <div class="settings-row">
-            <label class="settings-label" style="font-size:11px">Trigger</label>
-            <select class="sell-trigger-select" style="flex:1;padding:2px 4px;background:#222;color:#ccc;border:1px solid #444;border-radius:3px;font-size:11px">
-              <option value="off" ${(node.sellTrigger||'off')==='off'?'selected':''}>Off</option>
-              <option value="price" ${(node.sellTrigger||'off')==='price'?'selected':''}>Price</option>
-              <option value="time" ${(node.sellTrigger||'off')==='time'?'selected':''}>Time</option>
-              <option value="both" ${(node.sellTrigger||'off')==='both'?'selected':''}>Price or Time</option>
-            </select>
-          </div>
-          <div class="settings-row sell-price-row" style="display:${(node.sellTrigger||'off')==='price'||(node.sellTrigger||'off')==='both'?'':'none'}">
-            <label class="settings-label" style="font-size:11px">Min Sell Price</label>
-            <div class="settings-slider-group"><input type="range" class="sell-price-slider" min="1" max="200" step="1" value="${node.sellPrice||50}"><span class="sell-price-value">${node.sellPrice||50} $/MWh</span></div>
-          </div>
-          <div class="settings-row sell-time-row" style="display:${(node.sellTrigger||'off')==='time'||(node.sellTrigger||'off')==='both'?'':'none'}">
-            <label class="settings-label" style="font-size:11px">Start</label>
-            <div class="settings-slider-group" style="gap:4px;flex-wrap:wrap">
-              <input type="range" class="sell-start-slider" min="0" max="23" step="1" value="${node.sellStartHour||17}" style="width:50px"><span class="sell-start-value">${((node.sellStartHour||17)+'').padStart(2,'0')}:00</span>
-              <span style="color:#666;font-size:11px">for</span>
-              <input type="range" class="sell-dur-slider" min="1" max="24" step="1" value="${node.sellDuration||4}" style="width:50px"><span class="sell-dur-value">${node.sellDuration||4}h</span>
-            </div>
-          </div>
-          <div class="settings-row" style="font-size:11px;color:#888;font-weight:600;margin:4px 0 2px">-- Buy Contract --</div>
-          <div class="settings-row">
-            <label class="settings-label" style="font-size:11px">Trigger</label>
-            <select class="buy-trigger-select" style="flex:1;padding:2px 4px;background:#222;color:#ccc;border:1px solid #444;border-radius:3px;font-size:11px">
-              <option value="off" ${(node.buyTrigger||'off')==='off'?'selected':''}>Off</option>
-              <option value="price" ${(node.buyTrigger||'off')==='price'?'selected':''}>Price</option>
-              <option value="time" ${(node.buyTrigger||'off')==='time'?'selected':''}>Time</option>
-              <option value="both" ${(node.buyTrigger||'off')==='both'?'selected':''}>Price or Time</option>
-            </select>
-          </div>
-          <div class="settings-row buy-price-row" style="display:${(node.buyTrigger||'off')==='price'||(node.buyTrigger||'off')==='both'?'':'none'}">
-            <label class="settings-label" style="font-size:11px">Max Buy Price</label>
-            <div class="settings-slider-group"><input type="range" class="buy-price-slider" min="1" max="200" step="1" value="${node.buyPrice||20}"><span class="buy-price-value">${node.buyPrice||20} $/MWh</span></div>
-          </div>
-          <div class="settings-row buy-time-row" style="display:${(node.buyTrigger||'off')==='time'||(node.buyTrigger||'off')==='both'?'':'none'}">
-            <label class="settings-label" style="font-size:11px">Start</label>
-            <div class="settings-slider-group" style="gap:4px;flex-wrap:wrap">
-              <input type="range" class="buy-start-slider" min="0" max="23" step="1" value="${node.buyStartHour||3}" style="width:50px"><span class="buy-start-value">${((node.buyStartHour||3)+'').padStart(2,'0')}:00</span>
-              <span style="color:#666;font-size:11px">for</span>
-              <input type="range" class="buy-dur-slider" min="1" max="24" step="1" value="${node.buyDuration||4}" style="width:50px"><span class="buy-dur-value">${node.buyDuration||4}h</span>
-            </div>
-          </div>
         </div>
         <div class="settings-row"><label class="settings-label">Discharge Rate</label><div class="settings-slider-group"><input type="range" class="discharge-slider" min="1" max="500" step="1" value="${dchgR}"><span class="discharge-value">${dchgR} MW</span></div></div>
         <div class="settings-row"><label class="settings-label">Charge Rate</label><div class="settings-slider-group"><input type="range" class="charge-slider" min="1" max="500" step="1" value="${chgR}"><span class="charge-value">${chgR} MW</span></div></div>
         <div class="settings-row"><label class="settings-label">Ramp Up TC</label><div class="settings-slider-group"><input type="range" class="ramp-up-slider" min="0.05" max="60" step="0.05" value="${node.rampUpTC||0.1}"><span class="ramp-up-value">${(node.rampUpTC||0.1).toFixed(2)}s</span></div></div>
         <div class="settings-row"><label class="settings-label">Ramp Down TC</label><div class="settings-slider-group"><input type="range" class="ramp-down-slider" min="0.05" max="60" step="0.05" value="${node.rampDownTC||0.1}"><span class="ramp-down-value">${(node.rampDownTC||0.1).toFixed(2)}s</span></div></div>
         <div class="settings-row"><label class="settings-label">Max Capacity</label><div class="settings-slider-group"><input type="range" class="capacity-slider" min="10" max="1000" step="10" value="${cap}"><span class="capacity-value">${cap} MWh</span></div></div>
-        <div class="settings-row sep-top"><label class="settings-label">Mode</label>
-          <div class="settings-slider-group">
-            <select class="storage-mode-select">
-              <option value="balancing" ${mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option>
-              <option value="load-follow" ${mode === 'load-follow' ? 'selected' : ''}>Load-Follow (FCR + AGC)</option>
-              <option value="fcr-only" ${mode === 'fcr-only' ? 'selected' : ''}>FCR Only</option>
-              <option value="grid-forming" ${mode === 'grid-forming' ? 'selected' : ''}>Grid Forming</option>
-              <option value="fixed" ${mode === 'fixed' ? 'selected' : ''}>Fixed</option>
-              <option value="merchant" ${mode === 'merchant' ? 'selected' : ''}>Merchant</option>
-            </select>
-          </div>
-        </div>
         <div class="settings-row sep-top"><button class="storage-shutdown-btn" style="width:100%;padding:6px 0;border:1px solid #c0392b;border-radius:4px;cursor:pointer;font-size:13px;background:${node.tripped ? '#27ae60' : 'transparent'};color:${node.tripped ? '#fff' : '#c0392b'}">${node.tripped ? '🔄 Restart' : '🛑 Shut Down'}</button></div>
       </div>
             <div class="settings-resize-handle"></div>`;
@@ -436,42 +373,34 @@ export class SettingsPanel {
     entry.mwRespEl = panel.querySelector('.storage-mw-response');
     entry.modeSelect = panel.querySelector('.storage-mode-select');
     entry.fcrGroup = panel.querySelector('.storage-fcr-group');
-    entry.fixedGroup = panel.querySelector('.storage-fixed-group');
-    entry.merchantGroup = panel.querySelector('.storage-merchant-group');
+    entry.panel = panel;
 
     // SoC slider
     const socSlider = panel.querySelector('.soc-slider');
     socSlider.addEventListener('input', () => { const v = parseFloat(socSlider.value); node.mw = Math.min(v, node.maxCapacity || 100); entry.socEl.textContent = v.toFixed(2) + ' MWh'; });
     socSlider.addEventListener('change', () => this.persister.persist());
 
-    // Baseline contract (dispatch) slider
-    const bcSlider = panel.querySelector('.baseline-contract-slider');
-    const bcVal = panel.querySelector('.baseline-contract-value');
-    bcSlider.addEventListener('input', () => {
-      const v = parseInt(bcSlider.value, 10);
-      bcVal.textContent = (v >= 0 ? '+' : '') + v + ' MW';
-      node.baselineContract = v;
-    });
-    bcSlider.addEventListener('change', () => this.persister.persist());
-    entry.bcSlider = bcSlider;
-    entry.bcVal = bcVal;
-
-    // Mode select
-    entry.neutralGroup = panel.querySelector('.storage-neutral-group');
-    const neutralCb = panel.querySelector('.energy-neutral-checkbox');
-    neutralCb.addEventListener('change', () => {
-      node.energyNeutral = neutralCb.checked;
-      this.persister.persist();
-    });
-
+    // Mode select — shows baseline contract only for grid-forming
+    const baselineGroup = panel.querySelector('.storage-baseline-group');
     entry.modeSelect.addEventListener('change', () => {
       node.mode = entry.modeSelect.value;
-      entry.fcrGroup.style.display = (node.mode === 'balancing' || node.mode === 'fcr-only' || node.mode === 'grid-forming' || node.mode === 'load-follow') ? '' : 'none';
-      entry.fixedGroup.style.display = node.mode === 'fixed' ? '' : 'none';
-      if (entry.merchantGroup) entry.merchantGroup.style.display = node.mode === 'merchant' ? '' : 'none';
-      if (entry.neutralGroup) entry.neutralGroup.style.display = node.mode === 'balancing' ? '' : 'none';
+      if (baselineGroup) baselineGroup.style.display = node.mode === 'grid-forming' ? '' : 'none';
       this.persister.persist();
     });
+
+    // Baseline contract (dispatch) slider — grid-forming only
+    const bcSlider = panel.querySelector('.baseline-contract-slider');
+    const bcVal = panel.querySelector('.baseline-contract-value');
+    if (bcSlider) {
+      bcSlider.addEventListener('input', () => {
+        const v = parseInt(bcSlider.value, 10);
+        bcVal.textContent = (v >= 0 ? '+' : '') + v + ' MW';
+        node.baselineContract = v;
+      });
+      bcSlider.addEventListener('change', () => this.persister.persist());
+      entry.bcSlider = bcSlider;
+      entry.bcVal = bcVal;
+    }
 
     // Storage shutdown button
     const stShutdownBtn = panel.querySelector('.storage-shutdown-btn');
@@ -515,20 +444,12 @@ export class SettingsPanel {
       rampDownSlider.addEventListener('change', () => this.persister.persist());
     }
 
-    // Fixed target slider
-    const fixedSlider = panel.querySelector('.fixed-target-slider');
-    const fixedVal = panel.querySelector('.fixed-target-value');
-    entry.fixedSlider = fixedSlider;
-    entry.fixedVal = fixedVal;
-    fixedSlider.addEventListener('input', () => { const v = parseInt(fixedSlider.value, 10); fixedVal.textContent = (v >= 0 ? '+' : '') + v + ' MW'; node.fixedTarget = v; });
-    fixedSlider.addEventListener('change', () => this.persister.persist());
-
     // Charge/discharge dual-range sliders
     const chg = panel.querySelector('.charge-slider'), chgV = panel.querySelector('.charge-value');
     const dchg = panel.querySelector('.discharge-slider'), dchgV = panel.querySelector('.discharge-value');
-    chg.addEventListener('input', () => { const v = parseInt(chg.value, 10); chgV.textContent = v + ' MW'; node.chargeRate = v; fixedSlider.min = -v; });
+    chg.addEventListener('input', () => { const v = parseInt(chg.value, 10); chgV.textContent = v + ' MW'; node.chargeRate = v; });
     chg.addEventListener('change', () => this.persister.persist());
-    dchg.addEventListener('input', () => { const v = parseInt(dchg.value, 10); dchgV.textContent = v + ' MW'; node.dischargeRate = v; fixedSlider.max = v; });
+    dchg.addEventListener('input', () => { const v = parseInt(dchg.value, 10); dchgV.textContent = v + ' MW'; node.dischargeRate = v; });
     dchg.addEventListener('change', () => this.persister.persist());
 
     // Capacity slider
@@ -536,64 +457,6 @@ export class SettingsPanel {
     capSlider.addEventListener('input', () => { const v = parseInt(capSlider.value, 10); capV.textContent = v + ' MWh'; node.maxCapacity = v; if (node.mw > v) { node.mw = v; entry.socEl.textContent = v.toFixed(2) + ' MWh'; socSlider.max = v; } });
     capSlider.addEventListener('change', () => this.persister.persist());
 
-    // Merchant controls
-    const sellTrigger = panel.querySelector('.sell-trigger-select');
-    const buyTrigger = panel.querySelector('.buy-trigger-select');
-    const sellPriceRow = panel.querySelector('.sell-price-row');
-    const sellTimeRow = panel.querySelector('.sell-time-row');
-    const buyPriceRow = panel.querySelector('.buy-price-row');
-    const buyTimeRow = panel.querySelector('.buy-time-row');
-
-    if (sellTrigger) {
-      function updateSellVisibility() {
-        const v = sellTrigger.value;
-        if (sellPriceRow) sellPriceRow.style.display = (v === 'price' || v === 'both') ? '' : 'none';
-        if (sellTimeRow) sellTimeRow.style.display = (v === 'time' || v === 'both') ? '' : 'none';
-      }
-      function updateBuyVisibility() {
-        const v = buyTrigger.value;
-        if (buyPriceRow) buyPriceRow.style.display = (v === 'price' || v === 'both') ? '' : 'none';
-        if (buyTimeRow) buyTimeRow.style.display = (v === 'time' || v === 'both') ? '' : 'none';
-      }
-      sellTrigger.addEventListener('change', () => { node.sellTrigger = sellTrigger.value; updateSellVisibility(); this.persister.persist(); });
-      buyTrigger.addEventListener('change', () => { node.buyTrigger = buyTrigger.value; updateBuyVisibility(); this.persister.persist(); });
-
-      const sellPriceSlider = panel.querySelector('.sell-price-slider'), sellPriceVal = panel.querySelector('.sell-price-value');
-      if (sellPriceSlider) {
-        sellPriceSlider.addEventListener('input', () => { const v = parseInt(sellPriceSlider.value, 10); sellPriceVal.textContent = v + ' $/MWh'; node.sellPrice = v; });
-        sellPriceSlider.addEventListener('change', () => this.persister.persist());
-      }
-
-      const sellStartSlider = panel.querySelector('.sell-start-slider'), sellStartVal = panel.querySelector('.sell-start-value');
-      if (sellStartSlider) {
-        sellStartSlider.addEventListener('input', () => { const v = parseInt(sellStartSlider.value, 10); sellStartVal.textContent = (v+'').padStart(2,'0') + ':00'; node.sellStartHour = v; });
-        sellStartSlider.addEventListener('change', () => this.persister.persist());
-      }
-
-      const sellDurSlider = panel.querySelector('.sell-dur-slider'), sellDurVal = panel.querySelector('.sell-dur-value');
-      if (sellDurSlider) {
-        sellDurSlider.addEventListener('input', () => { const v = parseInt(sellDurSlider.value, 10); sellDurVal.textContent = v + 'h'; node.sellDuration = v; });
-        sellDurSlider.addEventListener('change', () => this.persister.persist());
-      }
-
-      const buyPriceSlider = panel.querySelector('.buy-price-slider'), buyPriceVal = panel.querySelector('.buy-price-value');
-      if (buyPriceSlider) {
-        buyPriceSlider.addEventListener('input', () => { const v = parseInt(buyPriceSlider.value, 10); buyPriceVal.textContent = v + ' $/MWh'; node.buyPrice = v; });
-        buyPriceSlider.addEventListener('change', () => this.persister.persist());
-      }
-
-      const buyStartSlider = panel.querySelector('.buy-start-slider'), buyStartVal = panel.querySelector('.buy-start-value');
-      if (buyStartSlider) {
-        buyStartSlider.addEventListener('input', () => { const v = parseInt(buyStartSlider.value, 10); buyStartVal.textContent = (v+'').padStart(2,'0') + ':00'; node.buyStartHour = v; });
-        buyStartSlider.addEventListener('change', () => this.persister.persist());
-      }
-
-      const buyDurSlider = panel.querySelector('.buy-dur-slider'), buyDurVal = panel.querySelector('.buy-dur-value');
-      if (buyDurSlider) {
-        buyDurSlider.addEventListener('input', () => { const v = parseInt(buyDurSlider.value, 10); buyDurVal.textContent = v + 'h'; node.buyDuration = v; });
-        buyDurSlider.addEventListener('change', () => this.persister.persist());
-      }
-    }
 
   } else {
     panel.innerHTML = `
