@@ -34,9 +34,9 @@ function addNode(type, wx, wy) {
   if (type === 'load') {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 10, baseMw: 10, shedPct: 0, noiseEnabled: false, noiseMin: 100, noiseMax: 200, noisePct: 10 };
   } else if (type === 'generator') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, bidPrice: 50, bidQty: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, tripped: false, freqTimer: 0 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0, rating: 100, inertia: 5, droop: 0.04, baselineContract: 0, fcrHeadroom: 10, bidPrice: 50, bidQty: 100, mode: 'balancing', turbineTimeConstant: 1, rampDownTC: 0.3, agcOffset: 0, agcTarget: 0, tripped: false, freqTimer: 0 };
   } else if (type === 'storage') {
-    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 500, dischargeRate: 500, maxCapacity: 100, mode: 'balancing', baselineContract: 0, fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0, agcOffset: 0, freqRestore: 0, freqTimer: 0 };
+    node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 50, chargeRate: 500, dischargeRate: 500, maxCapacity: 100, mode: 'balancing', baselineContract: 0, fcrHeadroom: 10, droop: 0.04, fixedTarget: 0, mwResponse: 0, agcOffset: 0, agcTarget: 0, freqRestore: 0, freqTimer: 0 };
   } else {
     node = { id: uid(), type, x: wx, y: wy, shortId: shortId(type), label: '', mw: 0 };
   }
@@ -586,7 +586,7 @@ document.addEventListener('keydown', (e) => {
       const fresh = { ...n, id: newId, x: n.x + offset, y: n.y + offset, shortId: shortId(n.type), label: '' };
       if (fresh.type === 'generator') { fresh.tripped = false; fresh.freqTimer = 0; }
       if (fresh.type === 'load') { fresh.shedPct = 0; fresh.baseMw = fresh.mw || 10; }
-      if (fresh.type === 'storage') { fresh.mwResponse = 0; fresh.agcOffset = 0; }
+      if (fresh.type === 'storage') { fresh.mwResponse = 0; fresh.agcOffset = 0; fresh.agcTarget = 0; }
       pasted.push(fresh);
     }
     state.nodes.push(...pasted);
