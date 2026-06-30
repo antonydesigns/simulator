@@ -177,9 +177,9 @@ export class SimulationEngine {
     }
     // Under scarcity, marginalGenIds stays empty — AGC falls back to all balancing gens
 
-    // Reset AGC offsets for merchant gens only (load-follow + balancing keep their accumulated offset)
+    // Reset AGC offsets for all gens on dispatch — new baselines represent current conditions
     for (const gen of allGens) {
-      if (gen.mode === "merchant") gen.agcOffset = 0;
+      gen.agcOffset = 0;
     }
     for (const st of allStorages) st.agcOffset = 0;
     // Reset balancing storages too (not in merchant scope)
