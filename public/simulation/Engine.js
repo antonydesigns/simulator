@@ -137,7 +137,10 @@ export class SimulationEngine {
     for (const gen of allGens) {
       if (gen.mode === "merchant") gen.agcOffset = 0;
     }
-    for (const st of allStorages) st.agcOffset = 0;
+    // Only reset non-balancing storage AGC offsets (balancing keeps its accumulated AGC)
+    for (const st of allStorages) {
+      if (st.mode !== "balancing") st.agcOffset = 0;
+    }
 
     state.marketLoad = marketRemaining;
   }

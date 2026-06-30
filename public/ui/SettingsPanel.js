@@ -363,7 +363,7 @@ export class SettingsPanel {
         <div class="settings-row"><label class="settings-label">Mode</label>
           <div class="settings-slider-group">
             <select class="storage-mode-select">
-              <option value="balancing" ${mode === 'balancing' ? 'selected' : ''}>Balancing (FCR + AGC)</option>
+              <option value="balancing" ${mode === 'balancing' ? 'selected' : ''}>Balancing</option>
               <option value="grid-forming" ${mode === 'grid-forming' ? 'selected' : ''}>Grid Forming</option>
             </select>
           </div>
