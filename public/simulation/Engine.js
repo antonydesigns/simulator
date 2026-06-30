@@ -774,6 +774,16 @@ const rampUpTC = st.rampUpTC || 0.1;
             (g.mode === "balancing" && (state.marginalGenIds.size === 0 || state.marginalGenIds.has(g.id))) ||
             g.mode === "load-follow"
           );
+          // Decay agcOffset of non-marginal balancing gens (unconditional)
+          if (state.marginalGenIds) {
+            for (const gen of gens) {
+              if (gen.mode !== "balancing") continue;
+              if (state.marginalGenIds.has(gen.id)) continue;
+              if (!gen.agcOffset) continue;
+              gen.agcOffset *= Math.exp(-physicsDt / 20);
+              if (Math.abs(gen.agcOffset) < 0.001) gen.agcOffset = 0;
+            }
+          }
           const freqErr = f0 - subFreqRef.value;
           if (balancingGens.length > 0) {
             const agcRateLimit = 5;
