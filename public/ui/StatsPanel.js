@@ -430,12 +430,43 @@ export class StatsPanel {
       scrollbar.value = Math.min(maxScroll, viewLeft);
     }
 
-    // Time info
+    // Time-of-day from sim (matches demandCurve cycle)
+    const simDt = (1 / sim.tickHz) * sim.speed;
+    const fmtTod = (idx) => {
+      const t = idx * simDt;
+      const todSec = t % 86400;
+      const h = Math.floor(todSec / 3600);
+      const m = Math.floor((todSec % 3600) / 60);
+      return h.toString().padStart(2, '0') + ':' + m.toString().padStart(2, '0');
+    };
+
+    // X-axis baseline line
+    ctx.strokeStyle = '#d6d2c8';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padL, padT + ph);
+    ctx.lineTo(padL + pw, padT + ph);
+    ctx.stroke();
+
+    // X-axis time-of-day labels (3 evenly spaced ticks)
+    ctx.fillStyle = '#999';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const labelCount = 3;
+    for (let l = 0; l < labelCount; l++) {
+      const frac = l / (labelCount - 1);
+      const idx = viewLeft + Math.round(frac * (visibleData.length - 1));
+      const x = padL + frac * pw;
+      ctx.fillText(fmtTod(idx), x, padT + ph + 4);
+    }
+
+    // Time info (time-of-day range)
     ctx.fillStyle = '#888';
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText('± ' + viewLeft + ' .. ' + viewEnd + ' / ' + total, padL + 4, padT + ph + 4);
+    ctx.fillText(fmtTod(viewLeft) + ' .. ' + fmtTod(viewEnd - 1) + ' / ' + fmtTod(total - 1), padL + 4, padT + ph + 18);
 
     // Hover crosshair + tooltip
     const hoverX = canvas.dataset._freqHoverX;
@@ -446,8 +477,7 @@ export class StatsPanel {
         const dp = visibleData[i];
         const freqVal = dp.frequency;
         const chartY = padT + (yMax - freqVal) * yScale;
-        const simTime = viewLeft + i;
-        const seconds = (simTime * 0.25).toFixed(1);
+                const seconds = fmtTod(i);
 
         // Vertical line
         ctx.strokeStyle = '#e74c3c';
@@ -476,7 +506,7 @@ export class StatsPanel {
         ctx.fillText(freqVal.toFixed(3) + ' Hz', tooltipX + 6, tooltipY + 4);
         ctx.font = '11px sans-serif';
         ctx.fillStyle = '#bbb';
-        ctx.fillText('t = ' + seconds + 's', tooltipX + 6, tooltipY + 21);
+        ctx.fillText('t = ' + seconds, tooltipX + 6, tooltipY + 21);
       }
     }
 
