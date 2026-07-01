@@ -323,7 +323,7 @@ export class StatsPanel {
     const data = sim.dataBuffer;
     if (data.length < 2) { ctx.restore(); return; }
 
-    const padL = 35, padR = 8, padT = 10, padB = 20;
+    const padL = 35, padR = 8, padT = 10, padB = 30;
     const pw = w - padL - padR, ph = h - padT - padB;
 
     // Determine visible range
@@ -440,17 +440,17 @@ export class StatsPanel {
       return h.toString().padStart(2, '0') + ':' + m.toString().padStart(2, '0');
     };
 
-    // X-axis baseline line
-    ctx.strokeStyle = '#d6d2c8';
+    // X-axis baseline
+    ctx.strokeStyle = '#bbb';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(padL, padT + ph);
     ctx.lineTo(padL + pw, padT + ph);
     ctx.stroke();
 
-    // X-axis time-of-day labels (3 evenly spaced ticks)
-    ctx.fillStyle = '#999';
-    ctx.font = '10px sans-serif';
+    // X-axis time-of-day labels with tick marks (3 evenly spaced)
+    ctx.fillStyle = '#555';
+    ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     const labelCount = 3;
@@ -458,15 +458,24 @@ export class StatsPanel {
       const frac = l / (labelCount - 1);
       const idx = viewLeft + Math.round(frac * (visibleData.length - 1));
       const x = padL + frac * pw;
-      ctx.fillText(fmtTod(idx), x, padT + ph + 4);
+
+      // Tick mark
+      ctx.strokeStyle = '#bbb';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, padT + ph);
+      ctx.lineTo(x, padT + ph + 4);
+      ctx.stroke();
+
+      ctx.fillText(fmtTod(idx), x, padT + ph + 6);
     }
 
     // Time info (time-of-day range)
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = '#666';
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(fmtTod(viewLeft) + ' .. ' + fmtTod(viewEnd - 1) + ' / ' + fmtTod(total - 1), padL + 4, padT + ph + 18);
+    ctx.fillText(fmtTod(viewLeft) + ' .. ' + fmtTod(viewEnd - 1) + ' / ' + fmtTod(total - 1), padL + 4, padT + ph + 24);
 
     // Hover crosshair + tooltip
     const hoverX = canvas.dataset._freqHoverX;
