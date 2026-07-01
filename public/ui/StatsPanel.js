@@ -438,6 +438,9 @@ export class StatsPanel {
       const todSec = t % 86400;
       const h = Math.floor(todSec / 3600);
       const m = Math.floor((todSec % 3600) / 60);
+      const s = Math.floor(todSec % 60);
+      if (t < 60) return day + 'd 00:00:' + s.toString().padStart(2, '0');
+      if (t < 3600) return day + 'd 00:' + m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
       return day + 'd ' + h.toString().padStart(2, '0') + ':' + m.toString().padStart(2, '0');
     };
 
