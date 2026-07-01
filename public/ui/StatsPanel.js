@@ -487,7 +487,7 @@ export class StatsPanel {
         const dp = visibleData[i];
         const freqVal = dp.frequency;
         const chartY = padT + (yMax - freqVal) * yScale;
-                const seconds = fmtTod(i);
+                const seconds = fmtTod(viewLeft + i);
 
         // Vertical line
         ctx.strokeStyle = '#e74c3c';
