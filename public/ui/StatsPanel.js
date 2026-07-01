@@ -434,10 +434,11 @@ export class StatsPanel {
     const simDt = (1 / sim.tickHz) * sim.speed;
     const fmtTod = (idx) => {
       const t = idx * simDt;
+      const day = Math.floor(t / 86400);
       const todSec = t % 86400;
       const h = Math.floor(todSec / 3600);
       const m = Math.floor((todSec % 3600) / 60);
-      return h.toString().padStart(2, '0') + ':' + m.toString().padStart(2, '0');
+      return day + 'd ' + h.toString().padStart(2, '0') + ':' + m.toString().padStart(2, '0');
     };
 
     // X-axis baseline
