@@ -430,12 +430,34 @@ export class StatsPanel {
       scrollbar.value = Math.min(maxScroll, viewLeft);
     }
 
-    // Time info
+    // Sim-time per sample
+    const simDt = (1 / sim.tickHz) * sim.speed;
+    const fmtSimTime = (idx) => {
+      const t = idx * simDt;
+      if (t >= 3600) return (t / 3600).toFixed(1) + 'h';
+      if (t >= 60) return (t / 60).toFixed(1) + 'm';
+      return t.toFixed(1) + 's';
+    };
+
+    // X-axis time labels (3 evenly spaced ticks)
+    ctx.fillStyle = '#999';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    const labelCount = 3;
+    for (let l = 0; l < labelCount; l++) {
+      const frac = l / (labelCount - 1);
+      const idx = viewLeft + Math.round(frac * (visibleData.length - 1));
+      const x = padL + frac * pw;
+      ctx.fillText(fmtSimTime(idx), x, padT + ph + 2);
+    }
+
+    // Time info (sim-time range)
     ctx.fillStyle = '#888';
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText('± ' + viewLeft + ' .. ' + viewEnd + ' / ' + total, padL + 4, padT + ph + 4);
+    ctx.fillText(fmtSimTime(viewLeft) + ' .. ' + fmtSimTime(viewEnd - 1) + ' / ' + fmtSimTime(total - 1), padL + 4, padT + ph + 14);
 
     // Hover crosshair + tooltip
     const hoverX = canvas.dataset._freqHoverX;
@@ -446,8 +468,7 @@ export class StatsPanel {
         const dp = visibleData[i];
         const freqVal = dp.frequency;
         const chartY = padT + (yMax - freqVal) * yScale;
-        const simTime = viewLeft + i;
-        const seconds = (simTime * 0.25).toFixed(1);
+        const seconds = (i * simDt).toFixed(1);
 
         // Vertical line
         ctx.strokeStyle = '#e74c3c';
