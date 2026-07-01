@@ -216,44 +216,33 @@ export class StatsPanel {
     });
   }
 
-  getFreq(d, freqChartSelectedNetworkId) {
-    if (freqChartSelectedNetworkId !== 'all' && d.networks && d.networks[freqChartSelectedNetworkId] !== undefined) {
-      return d.networks[freqChartSelectedNetworkId];
-    }
-    return d.frequency;
-  }
-
-  _initFreqChart() {
-    const canvas = document.getElementById('freq-chart-canvas');
-    if (!canvas || canvas.dataset._freqInit) return;
-    canvas.dataset._freqInit = '1';
-
+  _initFreqChartEvents(canvas) {
     const sim = this.store.sim;
+    const store = this.store;
+    const padL = 38;
+
+    // Wheel zoom
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const store = this.store;
-      const defaultPoints = 250;
-      let range = store.freqViewRight || defaultPoints;
-      const zoomFactor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
-      range = Math.max(20, Math.min(sim.dataBuffer.length, Math.round(range * zoomFactor)));
+      const defaultRange = 250;
+      let range = store.freqViewRight || defaultRange;
+      const factor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+      range = Math.max(20, Math.min(sim.dataBuffer.length, Math.round(range * factor)));
       store.freqViewRight = range;
-      // Keep view anchored at right edge
       store.freqViewLeft = 0;
       this.drawFreqChart();
     }, { passive: false });
 
-    let dragStartX = 0, dragStartLeft = 0;
+    // Drag pan
+    let dragStartX = 0;
     canvas.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.freq-chart-close')) return;
       dragStartX = e.clientX;
-      dragStartLeft = this.store.freqViewLeft || 0;
     });
     document.addEventListener('mousemove', (e) => {
       if (e.buttons !== 1 || dragStartX === 0) return;
       const dx = e.clientX - dragStartX;
       const panel = document.getElementById('freq-chart-panel');
-      const pw = (panel ? panel.clientWidth : 400) - 43;
-      const store = this.store;
+      const pw = (panel ? panel.clientWidth : 400) - padL - 8;
       const range = store.freqViewRight || sim.dataBuffer.length;
       const idxDelta = Math.round((dx / pw) * range);
       store.freqViewLeft = Math.max(0, (store.freqViewLeft || 0) - idxDelta);
@@ -263,28 +252,26 @@ export class StatsPanel {
       }
       this.drawFreqChart();
     });
-    document.addEventListener('mouseup', () => {
-      dragStartX = 0;
-    });
+    document.addEventListener('mouseup', () => { dragStartX = 0; });
 
     // Scrollbar
     const scrollbar = document.getElementById('freq-scrollbar');
     if (scrollbar) {
       scrollbar.addEventListener('input', () => {
-        const data = this.store.sim.dataBuffer;
-        const range = this.store.freqViewRight || 250;
+        const data = sim.dataBuffer;
+        const range = store.freqViewRight || 250;
         const max = Math.max(0, data.length - range);
-        this.store.freqViewLeft = Math.min(max, parseInt(scrollbar.value));
-        // Stop auto-follow when user touches scrollbar
+        store.freqViewLeft = Math.min(max, parseInt(scrollbar.value));
         this.drawFreqChart();
       });
     }
 
-    // Hover crosshair
+    // Hover
     canvas.addEventListener('mousemove', (e) => {
       const rect = canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
-      if (mx >= 35 && mx <= canvas.width - 8) {
+      const pw = (canvas.width || 440) - padL - 8;
+      if (mx >= padL && mx <= padL + pw) {
         canvas.dataset._freqHoverX = mx;
       } else {
         delete canvas.dataset._freqHoverX;
@@ -298,13 +285,18 @@ export class StatsPanel {
   }
 
   drawFreqChart() {
-    this._initFreqChart();
     const { state, sim } = this.store;
     const store = this.store;
     const panel = document.getElementById('freq-chart-panel');
     if (!panel || panel.classList.contains('hidden') || !store.freqChartVisible) return;
     const canvas = document.getElementById('freq-chart-canvas');
     if (!canvas) return;
+
+    // One-time init
+    if (!canvas.dataset._freqInit) {
+      canvas.dataset._freqInit = '1';
+      this._initFreqChartEvents(canvas);
+    }
     canvas.width = panel.clientWidth;
     canvas.height = panel.clientHeight;
     const ctx = canvas.getContext('2d');
@@ -323,16 +315,16 @@ export class StatsPanel {
     const data = sim.dataBuffer;
     if (data.length < 2) { ctx.restore(); return; }
 
-    const padL = 35, padR = 8, padT = 10, padB = 30;
+    const padL = 38, padR = 8, padT = 10, padB = 28;
     const pw = w - padL - padR, ph = h - padT - padB;
 
-    // Determine visible range
+    // --- Visible window ---
     const total = data.length;
     const defaultRange = 250;
     let range = store.freqViewRight || defaultRange;
     let viewLeft = store.freqViewLeft || 0;
 
-    // Auto-follow if at right edge
+    // Auto-follow (right edge)
     if (!store.freqViewLeft && total > range) {
       viewLeft = total - range;
     }
@@ -344,76 +336,71 @@ export class StatsPanel {
     const visibleData = data.slice(viewLeft, viewEnd);
     if (visibleData.length < 2) { ctx.restore(); return; }
 
-    // Auto-scale Y-axis based on visible data
-    const vals = visibleData.map(d => d.frequency);
-    let yMin = Math.min(...vals);
-    let yMax = Math.max(...vals);
-    // Add margin + ensure 50 Hz is always visible
-    const margin = Math.max((yMax - yMin) * 0.15, 0.1);
-    yMin = Math.min(yMin - margin, 49.5);
-    yMax = Math.max(yMax + margin, 50.5);
-    // Round to nice values
-    yMin = Math.floor(yMin * 10) / 10;
-    yMax = Math.ceil(yMax * 10) / 10;
-    if (yMax - yMin < 0.5) { yMin -= 0.25; yMax += 0.25; }
-    if (50 < yMin) yMin = 49.5;
-    if (50 > yMax) yMax = 50.5;
-    store.freqYMin = yMin;
-    store.freqYMax = yMax;
+    // --- Per-island frequency lookup ---
+    const selectedId = store.selectedNetworkId;
+    const getFreq = (d) => {
+      if (selectedId !== 'all' && d.networks && d.networks[selectedId] !== undefined) {
+        return d.networks[selectedId];
+      }
+      return d.frequency;
+    };
 
+    // --- Y-axis: fixed 49–51 Hz, 50 Hz center ---
+    const yMin = 49, yMax = 51;
     const yScale = ph / (yMax - yMin);
 
-    // 50 Hz reference line
-    const y50 = padT + (yMax - 50) * yScale;
-    ctx.strokeStyle = '#e0dcd0';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.moveTo(padL, y50);
-    ctx.lineTo(padL + pw, y50);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Y-axis labels (5 ticks)
-    ctx.fillStyle = '#999';
-    ctx.font = '11px sans-serif';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    const tickStep = (yMax - yMin) / 5;
-    for (let t = 0; t <= 5; t++) {
-      const val = yMin + t * tickStep;
-      const y = padT + (yMax - val) * yScale;
-      if (y < padT - 5 || y > padT + ph + 5) continue;
-      ctx.fillText(val.toFixed(1), padL - 6, y);
-      ctx.strokeStyle = '#e0dcd0';
-      ctx.lineWidth = 0.5;
-      ctx.beginPath();
-      ctx.moveTo(padL - 3, y);
-      ctx.lineTo(padL, y);
-      ctx.stroke();
-      // Grid line
-      ctx.strokeStyle = '#e8e4da';
-      ctx.lineWidth = 0.5;
+    // Grid: 0.2 Hz steps
+    ctx.strokeStyle = '#e8e4da';
+    ctx.lineWidth = 0.5;
+    for (let f = yMin; f <= yMax; f += 0.2) {
+      const y = padT + (yMax - f) * yScale;
       ctx.beginPath();
       ctx.moveTo(padL, y);
       ctx.lineTo(padL + pw, y);
       ctx.stroke();
     }
 
-    // Plot the line trace
+    // 50 Hz center line (thicker, dashed)
+    const y50 = padT + (yMax - 50) * yScale;
+    ctx.strokeStyle = '#c0b8a0';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padL, y50);
+    ctx.lineTo(padL + pw, y50);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#999';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('50 Hz', padL - 4, y50);
+
+    // Y-axis labels (0.5 Hz steps)
+    ctx.fillStyle = '#999';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let f = yMin; f <= yMax; f += 0.5) {
+      const y = padT + (yMax - f) * yScale;
+      ctx.fillText(f.toFixed(1), padL - 6, y);
+    }
+
+    // --- Plot trace ---
     ctx.strokeStyle = '#4a90d9';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     const xScale = pw / (visibleData.length - 1);
     for (let i = 0; i < visibleData.length; i++) {
       const x = padL + i * xScale;
-      const y = padT + (yMax - visibleData[i].frequency) * yScale;
+      const val = getFreq(visibleData[i]);
+      const y = padT + (yMax - val) * yScale;
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.stroke();
 
-    // Current frequency label at the right edge
-    const lastVal = visibleData[visibleData.length - 1].frequency;
+    // --- Current freq label at right edge ---
+    const lastVal = getFreq(visibleData[visibleData.length - 1]);
     const curX = padL + pw;
     const curY = padT + (yMax - lastVal) * yScale;
     ctx.fillStyle = '#333';
@@ -422,7 +409,16 @@ export class StatsPanel {
     ctx.textBaseline = 'bottom';
     ctx.fillText(lastVal.toFixed(3) + ' Hz', curX - 4, curY - 4);
 
-    // Update scrollbar
+    // --- Island label ---
+    if (selectedId !== 'all') {
+      ctx.fillStyle = '#888';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(selectedId, padL + 4, padT + 4);
+    }
+
+    // --- Scrollbar ---
     const scrollbar = document.getElementById('freq-scrollbar');
     if (scrollbar && scrollbar !== document.activeElement) {
       const maxScroll = Math.max(0, total - range);
@@ -430,18 +426,12 @@ export class StatsPanel {
       scrollbar.value = Math.min(maxScroll, viewLeft);
     }
 
-    // Time-of-day from sim (matches demandCurve cycle)
-    const simDt = (1 / sim.tickHz) * sim.speed;
-    const fmtTod = (idx) => {
-      const t = idx * simDt;
-      const day = Math.floor(t / 86400);
-      const todSec = t % 86400;
-      const h = Math.floor(todSec / 3600);
-      const m = Math.floor((todSec % 3600) / 60);
-      const s = Math.floor(todSec % 60);
-      if (t < 60) return day + 'd 00:00:' + s.toString().padStart(2, '0');
-      if (t < 3600) return day + 'd 00:' + m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
-      return day + 'd ' + h.toString().padStart(2, '0') + ':' + m.toString().padStart(2, '0');
+    // --- Real-time formatting (mm:ss.ms from entry.realTime) ---
+    const fmtReal = (t) => {
+      const m = Math.floor(t / 60);
+      const s = Math.floor(t % 60);
+      const ms = Math.floor((t % 1) * 10);
+      return m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0') + '.' + ms;
     };
 
     // X-axis baseline
@@ -452,47 +442,30 @@ export class StatsPanel {
     ctx.lineTo(padL + pw, padT + ph);
     ctx.stroke();
 
-    // X-axis time-of-day labels with tick marks (3 evenly spaced)
+    // X-axis labels (3 evenly spaced, using entry.realTime)
     ctx.fillStyle = '#555';
-    ctx.font = '11px sans-serif';
+    ctx.font = '10px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     const labelCount = 3;
     for (let l = 0; l < labelCount; l++) {
       const frac = l / (labelCount - 1);
-      const idx = viewLeft + Math.round(frac * (visibleData.length - 1));
       const x = padL + frac * pw;
-
-      // Tick mark
-      ctx.strokeStyle = '#bbb';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x, padT + ph);
-      ctx.lineTo(x, padT + ph + 4);
-      ctx.stroke();
-
-      ctx.fillText(fmtTod(idx), x, padT + ph + 6);
+      const idx = Math.round(frac * (visibleData.length - 1));
+      ctx.fillText(fmtReal(visibleData[idx].realTime), x, padT + ph + 6);
     }
 
-    // Time info (time-of-day range)
-    ctx.fillStyle = '#666';
-    ctx.font = '10px sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(fmtTod(viewLeft) + ' .. ' + fmtTod(viewEnd - 1) + ' / ' + fmtTod(total - 1), padL + 4, padT + ph + 24);
-
-    // Hover crosshair + tooltip
+    // --- Hover crosshair + tooltip ---
     const hoverX = canvas.dataset._freqHoverX;
     if (hoverX !== undefined) {
       const hx = parseFloat(hoverX);
       const i = Math.round((hx - padL) / xScale);
       if (i >= 0 && i < visibleData.length) {
         const dp = visibleData[i];
-        const freqVal = dp.frequency;
-        const chartY = padT + (yMax - freqVal) * yScale;
-                const seconds = fmtTod(viewLeft + i);
+        const val = getFreq(dp);
+        const timeStr = fmtReal(dp.realTime);
 
-        // Vertical line
+        // Vertical crosshair
         ctx.strokeStyle = '#e74c3c';
         ctx.lineWidth = 1;
         ctx.setLineDash([3, 3]);
@@ -503,23 +476,23 @@ export class StatsPanel {
         ctx.setLineDash([]);
 
         // Tooltip box
-        const tooltipW = 130, tooltipH = 42;
-        let tooltipX = hx + 8;
-        if (tooltipX + tooltipW > padL + pw) tooltipX = hx - tooltipW - 8;
-        const tooltipY = padT + 4;
+        const tw = 130, th = 42;
+        let tx = hx + 8;
+        if (tx + tw > padL + pw) tx = hx - tw - 8;
+        const ty = padT + 4;
         ctx.fillStyle = 'rgba(40,40,40,0.9)';
         ctx.beginPath();
-        ctx.roundRect(tooltipX, tooltipY, tooltipW, tooltipH, 4);
+        ctx.roundRect(tx, ty, tw, th, 4);
         ctx.fill();
 
         ctx.fillStyle = '#fff';
         ctx.font = 'bold 12px sans-serif';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        ctx.fillText(freqVal.toFixed(3) + ' Hz', tooltipX + 6, tooltipY + 4);
+        ctx.fillText(val.toFixed(3) + ' Hz', tx + 6, ty + 4);
         ctx.font = '11px sans-serif';
         ctx.fillStyle = '#bbb';
-        ctx.fillText('t = ' + seconds, tooltipX + 6, tooltipY + 21);
+        ctx.fillText('t = ' + timeStr, tx + 6, ty + 21);
       }
     }
 

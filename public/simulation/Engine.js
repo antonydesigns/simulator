@@ -173,6 +173,7 @@ export class SimulationEngine {
     const f0 = 50;
     const dt = (1 / sim.tickHz) * sim.speed;
     sim.simTime += dt;
+    sim.realTime += 1 / sim.tickHz;
 
     // Clear stale line flow data — only recomputed lines get updated
     for (const c of state.connections) {
@@ -962,6 +963,7 @@ export class SimulationEngine {
       for (const net of state.networks) netFreqs[net.id] = net.freq;
       const entry = {
         t: sim.dataBuffer.length * 0.25,
+        realTime: sim.realTime,
         frequency: state.frequency,
         networks: netFreqs,
         nodes: {},
@@ -1044,6 +1046,7 @@ export class SimulationEngine {
     sim.captureAccum = 0;
     sim.events = [];
     sim.simTime = 0;
+    sim.realTime = 0;
     sim.lastMarketPat = 0;
 
     // Reset trips, shedding, FCR/AGC offsets — but keep baselines intact

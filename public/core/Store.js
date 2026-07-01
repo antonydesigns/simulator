@@ -44,6 +44,7 @@ export class Store {
       captureAccum: 0,
       events: [],
       simTime: 0,
+      realTime: 0,
       speed: 1,
       lastMarketPat: 0,
     };
@@ -95,7 +96,6 @@ export class Store {
     this.freqChartVisible = false;
     this.freqViewLeft = 0;    // 0 = auto (window follows latest)
     this.freqViewRight = 0;   // 0 = auto, >0 = number of data points to show
-    this.freqYMin = 0;        // 0 = auto-scale to visible data
     this.meritChartVisible = false;
     this.dragPanel = null;
     this.dragOff = { x: 0, y: 0 };
